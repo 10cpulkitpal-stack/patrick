@@ -742,17 +742,39 @@ body.light-theme .chat-menu {
 
 /* ============ Responsive ============ */
 
+.sidebar-backdrop {
+  display: none;
+}
+
 @media (max-width: 768px) {
   .sidebar {
     position: fixed;
     z-index: 20;
     height: 100vh;
+    width: min(var(--sidebar-width), 82vw);
   }
   .sidebar.collapsed {
-    margin-left: calc(-1 * var(--sidebar-width));
+    margin-left: min(calc(-1 * var(--sidebar-width)), -82vw);
   }
   .message-row {
     padding: 14px 16px;
+  }
+  .message-body {
+    max-width: 82%;
+  }
+  .sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 15;
+  }
+  .sidebar-backdrop.visible {
+    display: block;
+  }
+  /* Prevent iOS Safari from auto-zooming the page when the composer input is focused */
+  .composer input {
+    font-size: 16px;
   }
 }
 

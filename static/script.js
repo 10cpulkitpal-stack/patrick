@@ -11,6 +11,7 @@ const voiceOnIcon = document.getElementById('voiceOnIcon');
 const sidebar = document.getElementById('sidebar');
 const sidebarToggle = document.getElementById('sidebarToggle');
 const sidebarOpen = document.getElementById('sidebarOpen');
+const sidebarBackdrop = document.getElementById('sidebarBackdrop');
 const themeToggleBtn = document.getElementById('themeToggleBtn');
 const themeIconMoon = document.getElementById('themeIconMoon');
 const themeIconSun = document.getElementById('themeIconSun');
@@ -146,13 +147,38 @@ function showEmptyState() {
 
 // ---------- sidebar collapse ----------
 
+const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
+
+function setSidebarOpen(open) {
+  sidebar.classList.toggle('collapsed', !open);
+  sidebarOpen.style.display = open ? 'none' : 'flex';
+  sidebarBackdrop.classList.toggle('visible', open && isMobile());
+}
+
 function toggleSidebar() {
-  const collapsed = sidebar.classList.toggle('collapsed');
-  sidebarOpen.style.display = collapsed ? 'flex' : 'none';
+  const isCollapsed = sidebar.classList.contains('collapsed');
+  setSidebarOpen(isCollapsed);
 }
 
 sidebarToggle.addEventListener('click', toggleSidebar);
 sidebarOpen.addEventListener('click', toggleSidebar);
+sidebarBackdrop.addEventListener('click', () => setSidebarOpen(false));
+
+// On phones, start with the sidebar tucked away (tap the menu icon to open it).
+// Laptop/desktop behavior is untouched — sidebar still starts open there.
+if (isMobile()) {
+  setSidebarOpen(false);
+}
+
+// If the window is resized/rotated across the mobile breakpoint, keep the
+// sidebar in its normal (always-open) desktop state.
+window.addEventListener('resize', () => {
+  if (!isMobile()) {
+    sidebar.classList.remove('collapsed');
+    sidebarOpen.style.display = 'none';
+    sidebarBackdrop.classList.remove('visible');
+  }
+});
 
 // ---------- theme (dark / light) ----------
 
@@ -431,6 +457,8 @@ async function openChat(chatId) {
   await loadChatList(chatId);
   inputEl.disabled = false;
   inputEl.focus();
+
+  if (isMobile()) setSidebarOpen(false);
 }
 
 async function deleteChat(chatId) {
