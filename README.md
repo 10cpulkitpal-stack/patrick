@@ -4,6 +4,13 @@ Patrick is a modern, ChatGPT-style AI chatbot built with **Python Flask**, **Jav
 
 It provides persistent chat conversations, image understanding, voice input/output, light/dark themes, chat management, and a responsive interface for desktop and mobile browsers.
 
+## 🌐 Live Demo
+
+**Try Patrick online:**  
+https://patrick-c89f.onrender.com/
+
+> The application is hosted on Render and may take a short time to wake up if the free instance has been inactive.
+
 ## ✨ Features
 
 - 💬 **AI chat** powered by Groq
