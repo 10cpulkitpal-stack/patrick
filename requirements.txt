@@ -2,3 +2,5 @@ flask
 groq
 python-dotenv
 gunicorn
+SQLAlchemy>=2.0,<3
+psycopg[binary]>=3.2,<4

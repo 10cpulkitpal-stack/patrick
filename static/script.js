@@ -39,37 +39,12 @@ function escapeHtml(str) {
 // Parses a bot reply for ```lang ... ``` fenced code blocks and inline `code`,
 // returning safe HTML with syntax-highlighted code blocks.
 function renderMarkdown(text) {
-  const parts = text.split(/```(\w*)\n?([\s\S]*?)```/g);
-  // split() with capturing groups gives: [plain, lang, code, plain, lang, code, ..., plain]
-  let html = '';
-
-  for (let i = 0; i < parts.length; i += 3) {
-    const plainText = parts[i] || '';
-    html += renderInline(plainText);
-
-    const lang = parts[i + 1];
-    const code = parts[i + 2];
-    if (code !== undefined) {
-      const safeCode = escapeHtml(code.replace(/\n$/, ''));
-      const langLabel = lang ? lang : 'text';
-      const langClass = lang ? 'language-' + lang : '';
-      html += `
-        <div class="code-block">
-          <div class="code-block-header">
-            <span>${escapeHtml(langLabel)}</span>
-            <button class="code-block-copy" data-code="${encodeURIComponent(code)}">Copy</button>
-          </div>
-          <pre><code class="${langClass}">${safeCode}</code></pre>
-        </div>`;
-    }
+  if (!window.marked || !window.DOMPurify) {
+    return `<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>`;
   }
 
-  return html;
-}
-
-function renderInline(text) {
-  const escaped = escapeHtml(text);
-  return escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
+  const html = window.marked.parse(text, { gfm: true, breaks: false });
+  return window.DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
 }
 
 function addMessage(text, role) {
@@ -91,16 +66,6 @@ function addMessage(text, role) {
     body.innerHTML = renderMarkdown(text);
     body.querySelectorAll('pre code').forEach(block => {
       if (window.hljs) window.hljs.highlightElement(block);
-    });
-    body.querySelectorAll('.code-block-copy').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const code = decodeURIComponent(btn.dataset.code);
-        navigator.clipboard.writeText(code).then(() => {
-          const original = btn.textContent;
-          btn.textContent = 'Copied!';
-          setTimeout(() => { btn.textContent = original; }, 1500);
-        });
-      });
     });
   } else {
     body.textContent = text;
@@ -310,6 +275,10 @@ document.addEventListener('click', closeAllMenus);
 
 async function loadChatList(selectId) {
   const res = await fetch('/api/chats');
+  if (res.status === 401) {
+    window.location.href = '/signin';
+    return;
+  }
   const chats = await res.json();
 
   chatListEl.innerHTML = '';
@@ -662,6 +631,10 @@ newChatBtn.addEventListener('click', createNewChat);
 
 async function init() {
   const res = await fetch('/api/chats');
+  if (res.status === 401) {
+    window.location.href = '/signin';
+    return;
+  }
   const chats = await res.json();
 
   if (chats.length > 0) {

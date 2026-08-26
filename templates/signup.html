@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Create account — Patrick</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="auth-page">
+<main class="auth-page-card">
+  <div class="auth-avatar">P</div>
+  <h1>Create your account</h1>
+  <p class="auth-subtitle">Your chats will be private to your account.</p>
+  <form id="authForm">
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="new-password" placeholder="At least 8 characters" minlength="8" required>
+    <button type="submit">Create account</button>
+    <div id="error" class="auth-error"></div>
+  </form>
+  <p class="auth-switch">Already have an account? <a href="/signin">Sign in</a></p>
+</main>
+<script>
+const form=document.getElementById('authForm');
+const error=document.getElementById('error');
+form.addEventListener('submit',async(e)=>{
+ e.preventDefault(); error.textContent='';
+ const button=form.querySelector('button'); button.disabled=true; button.textContent='Creating...';
+ try {
+   const res=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value})});
+   const data=await res.json();
+   if(!res.ok){error.textContent=data.error||'Unable to create account.';return;}
+   window.location.href='/';
+ } catch(err){error.textContent='Network error. Please try again.';}
+ finally {button.disabled=false;button.textContent='Create account';}
+});
+</script>
+</body>
+</html>
