@@ -353,14 +353,31 @@ def send_message(chat_id):
         new_title = make_title(stored_user_text) if chat["title"] == "New Chat" else chat["title"]
 
         with engine.begin() as conn:
-            conn.execute(
-                text("INSERT INTO messages (chat_id, role, content, created_at) VALUES (:chat_id, 'user', :content, :created_at)"),
-                {"chat_id": chat_id, "content": stored_user_text, "created_at": now},
-            )
-            conn.execute(
-                text("INSERT INTO messages (chat_id, role, content, created_at) VALUES (:chat_id, 'assistant', :content, :created_at)"),
-                {"chat_id": chat_id, "content": reply, "created_at": time.time()},
-            )
+                conn.execute(
+                    text("""
+                        INSERT INTO messages (id, chat_id, role, content, created_at)
+                        VALUES (:id, :chat_id, 'user', :content, :created_at)
+                    """),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "chat_id": chat_id,
+                        "content": stored_user_text,
+                        "created_at": now,
+                    },
+                )
+
+                conn.execute(
+                    text("""
+                        INSERT INTO messages (id, chat_id, role, content, created_at)
+                        VALUES (:id, :chat_id, 'assistant', :content, :created_at)
+                    """),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "chat_id": chat_id,
+                        "content": reply,
+                        "created_at": time.time(),
+                    },
+                )
             if new_title != chat["title"]:
                 conn.execute(
                     text("UPDATE chats SET title = :title WHERE id = :chat_id AND user_id = :user_id"),
