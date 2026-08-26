@@ -378,11 +378,11 @@ def send_message(chat_id):
                         "created_at": time.time(),
                     },
                 )
-            if new_title != chat["title"]:
-                conn.execute(
-                    text("UPDATE chats SET title = :title WHERE id = :chat_id AND user_id = :user_id"),
-                    {"title": new_title, "chat_id": chat_id, "user_id": user["id"]},
-                )
+                if new_title != chat["title"]:
+                    conn.execute(
+                        text("UPDATE chats SET title = :title WHERE id = :chat_id AND user_id = :user_id"),
+                        {"title": new_title, "chat_id": chat_id, "user_id": user["id"]},
+                    )
 
         return jsonify({"reply": reply, "title": new_title})
 
