@@ -637,13 +637,20 @@ async function init() {
   }
   const chats = await res.json();
 
+  // Start on a blank conversation whenever the app opens. Reuse the latest
+  // empty draft on refresh so an untouched chat does not create duplicates.
   if (chats.length > 0) {
-    await openChat(chats[0].id);
-  } else {
-    inputEl.disabled = true;
-    showEmptyState();
-    await loadChatList(null);
+    const latestChatResponse = await fetch('/api/chats/' + chats[0].id);
+    if (latestChatResponse.ok) {
+      const latestChat = await latestChatResponse.json();
+      if (latestChat.messages.length === 0) {
+        await openChat(chats[0].id);
+        return;
+      }
+    }
   }
+
+  await createNewChat();
 }
 
 init();
