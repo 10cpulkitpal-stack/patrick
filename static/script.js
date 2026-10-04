@@ -9,7 +9,9 @@ const voiceOutputBtn = document.getElementById('voiceOutputBtn');
 const voiceOffIcon = document.getElementById('voiceOffIcon');
 const voiceOnIcon = document.getElementById('voiceOnIcon');
 const sidebar = document.getElementById('sidebar');
+const sidebarBrand = document.getElementById('sidebarBrand');
 const sidebarToggle = document.getElementById('sidebarToggle');
+const sidebarHistoryBtn = document.getElementById('sidebarHistoryBtn');
 const sidebarOpen = document.getElementById('sidebarOpen');
 const sidebarBackdrop = document.getElementById('sidebarBackdrop');
 const themeToggleBtn = document.getElementById('themeToggleBtn');
@@ -122,7 +124,7 @@ const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
 
 function setSidebarOpen(open) {
   sidebar.classList.toggle('collapsed', !open);
-  sidebarOpen.style.display = open ? 'none' : 'flex';
+  sidebarOpen.style.display = open || !isMobile() ? 'none' : 'flex';
   sidebarBackdrop.classList.toggle('visible', open && isMobile());
 }
 
@@ -132,6 +134,8 @@ function toggleSidebar() {
 }
 
 sidebarToggle.addEventListener('click', toggleSidebar);
+sidebarBrand.addEventListener('click', toggleSidebar);
+sidebarHistoryBtn.addEventListener('click', () => setSidebarOpen(true));
 sidebarOpen.addEventListener('click', toggleSidebar);
 sidebarBackdrop.addEventListener('click', () => setSidebarOpen(false));
 
@@ -144,11 +148,7 @@ if (isMobile()) {
 // If the window is resized/rotated across the mobile breakpoint, keep the
 // sidebar in its normal (always-open) desktop state.
 window.addEventListener('resize', () => {
-  if (!isMobile()) {
-    sidebar.classList.remove('collapsed');
-    sidebarOpen.style.display = 'none';
-    sidebarBackdrop.classList.remove('visible');
-  }
+  setSidebarOpen(!isMobile());
 });
 
 // ---------- theme (dark / light) ----------
