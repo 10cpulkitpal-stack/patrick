@@ -14,7 +14,7 @@ https://patrick-c89f.onrender.com/
 ## ✨ Features
 
 - 💬 **AI chat** powered by Groq
-- 🧠 **Conversation history** stored locally in `chats.json`
+- 🧠 **Conversation history** stored in SQLite by default, with PostgreSQL support
 - 🖼️ **Image understanding** using a vision-capable model
 - 📎 **Image/file attachment UI**
 - 🎙️ **Voice input** using the browser's Speech Recognition API
@@ -25,7 +25,7 @@ https://patrick-c89f.onrender.com/
 - ✏️ **Rename chats**
 - 🗑️ **Delete chats**
 - 🧑‍💻 **Markdown/code-friendly AI responses**
-- ⚡ Simple Flask backend with JSON-based local storage
+- 🔐 User accounts with per-user conversation storage
 
 ## 🛠️ Tech Stack
 
@@ -37,7 +37,7 @@ https://patrick-c89f.onrender.com/
 | HTML5 | Application structure |
 | CSS3 | UI and responsive styling |
 | JavaScript | Frontend interaction |
-| JSON | Local conversation storage |
+| SQLAlchemy | SQLite or PostgreSQL conversation storage |
 | python-dotenv | Environment variable management |
 | Highlight.js | Code syntax highlighting |
 
@@ -50,7 +50,7 @@ patrick-chatbot/
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
-├── chats.json
+├── patrick.db (created automatically for local SQLite use)
 │
 ├── templates/
 │   └── index.html
@@ -60,7 +60,7 @@ patrick-chatbot/
     └── style.css
 ```
 
-> `chats.json` is used for local conversation storage and should not be committed to a public repository if it contains personal conversations.
+> Local conversations are stored in `patrick.db`. Keep the database private; it contains account and chat data.
 
 ## 🚀 Getting Started
 
@@ -101,6 +101,10 @@ Create a `.env` file in the project root:
 
 ```env
 GROQ_API_KEY=your-groq-api-key-here
+SECRET_KEY=replace-with-a-long-random-secret
+GOOGLE_CLIENT_ID=your-google-oauth-client-id
+GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
+GOOGLE_REDIRECT_URI=http://127.0.0.1:5000/auth/google/callback
 ```
 
 You can use `.env.example` as a template.
@@ -126,8 +130,22 @@ Open the address in your browser.
 | Variable | Required | Description |
 |---|---|---|
 | `GROQ_API_KEY` | Yes | API key used to access Groq models |
+| `SECRET_KEY` | Yes in production | Flask session signing key. Set a long, random value before deployment. |
+| `GOOGLE_CLIENT_ID` | Optional | OAuth client ID from Google Cloud Console. Enables Google sign-in when paired with the secret. |
+| `GOOGLE_CLIENT_SECRET` | Optional | OAuth client secret. Keep it private and store it as a Render environment variable in production. |
+| `GOOGLE_REDIRECT_URI` | Optional | OAuth callback URL. Defaults to the current host's `/auth/google/callback`. |
+| `DATABASE_URL` | No | Database connection URL. Defaults to `sqlite:///patrick.db`. |
 | `PORT` | No | Port for the Flask application. Defaults to `5000` |
-| `FLASK_DEBUG` | No | Enables/disables Flask debug mode |
+| `FLASK_DEBUG` | No | Enables Flask debug mode; defaults to `false` |
+
+### Set up Google sign-in
+
+1. Create a **Web application** OAuth client in Google Cloud Console and configure the OAuth consent screen.
+2. Add your local callback URL, `http://127.0.0.1:5000/auth/google/callback`, as an authorized redirect URI.
+3. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in your local `.env` file.
+4. For Render, add the production callback URL `https://YOUR-APP.onrender.com/auth/google/callback` to the OAuth client's authorized redirect URIs. Set the same URL as `GOOGLE_REDIRECT_URI` and add both Google credentials in Render's environment settings.
+
+Google sign-in requires a verified Google email. If that email already has a Patrick account, signing in with Google opens that account; otherwise, Patrick creates one. Email/password sign-in remains available without Google credentials.
 
 Example:
 
@@ -183,7 +201,7 @@ AI response
 Browser displays response
   │
   ▼
-Conversation saved to chats.json
+Conversation saved to the configured SQL database
 ```
 
 ## 🔌 API Endpoints
@@ -276,20 +294,13 @@ The frontend is designed around a ChatGPT-inspired interface and includes:
 
 ## 💾 Data Storage
 
-For simplicity, Patrick uses a local JSON file:
+Patrick uses SQLAlchemy for conversation storage. Local development uses SQLite:
 
 ```text
-chats.json
+patrick.db
 ```
 
-This makes the project easy to run without installing a database.
-
-For a production application, consider replacing JSON storage with a database such as:
-
-- PostgreSQL
-- MySQL
-- SQLite
-- MongoDB
+Set `DATABASE_URL` to a PostgreSQL connection string for a hosted deployment. The app creates its tables automatically on startup.
 
 ## 🔒 Security Notes
 
@@ -298,12 +309,10 @@ Before deploying Patrick publicly:
 1. Keep API keys in environment variables.
 2. Never commit `.env`.
 3. Do not expose private conversation data.
-4. Add authentication and authorization.
-5. Add request rate limiting.
-6. Validate uploaded files and enforce size limits.
-7. Use HTTPS in production.
-8. Replace the local JSON storage with a proper database for multi-user applications.
-9. Disable Flask debug mode in production.
+4. Set a strong `SECRET_KEY` (required when `FLASK_ENV=production` or running on Render).
+5. Add request rate limiting and CSRF protection.
+6. Use HTTPS in production.
+7. Disable Flask debug mode in production.
 
 For production:
 
@@ -327,8 +336,6 @@ For production deployment, use a production WSGI server such as Gunicorn or anot
 
 Possible improvements include:
 
-- [ ] User authentication
-- [ ] PostgreSQL/MySQL database
 - [ ] Streaming AI responses
 - [ ] Better file/document understanding
 - [ ] PDF support
@@ -339,6 +346,7 @@ Possible improvements include:
 - [ ] Admin dashboard
 - [ ] Production deployment
 - [ ] Better error handling and API validation
+- [ ] Request rate limiting and CSRF protection
 - [ ] Automated tests
 
 ## 👨‍💻 Author

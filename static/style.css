@@ -820,6 +820,18 @@ body.light-theme .chat-menu {
 }
 .auth-page-card h1 { margin: 0 0 8px; font-size: 24px; }
 .auth-subtitle { margin: 0 0 24px; color: var(--text-secondary); font-size: 14px; line-height: 1.5; }
+.google-signin {
+  min-height: 44px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 11px;
+  padding: 10px 14px; border: 1px solid var(--border); border-radius: 9px;
+  background: var(--bg-composer); color: var(--text-primary); text-decoration: none; font-size: 14px; font-weight: 600;
+  transition: background .15s ease, border-color .15s ease;
+}
+.google-signin:hover { background: var(--bg-main); border-color: #777; }
+.google-signin:focus-visible { outline: 3px solid rgba(66,133,244,.35); outline-offset: 2px; }
+.auth-divider { display: flex; align-items: center; gap: 12px; margin: 19px 0 7px; color: var(--text-secondary); font-size: 12px; }
+.auth-divider::before, .auth-divider::after { content: ""; height: 1px; flex: 1; background: var(--border); }
+.auth-notice { margin: -8px 0 16px; color: var(--text-secondary); font-size: 13px; line-height: 1.45; }
+.auth-notice.error { color: #ff8d8d; }
 .auth-page-card form { text-align: left; }
 .auth-page-card label { display:block; margin: 14px 0 7px; font-size: 13px; color: var(--text-secondary); }
 .auth-page-card input {

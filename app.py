@@ -1,9 +1,13 @@
 import os
+import re
 import uuid
 import time
+import base64
+import binascii
 from functools import wraps
 
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash
+from authlib.integrations.flask_client import OAuth
 from groq import Groq
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -12,13 +16,35 @@ from sqlalchemy.exc import IntegrityError
 
 load_dotenv()
 
+is_production = (
+    os.environ.get("FLASK_ENV", "").lower() == "production"
+    or os.environ.get("RENDER", "").lower() == "true"
+)
+secret_key = os.environ.get("SECRET_KEY")
+if is_production and not secret_key:
+    raise RuntimeError("Set a strong SECRET_KEY before running in production.")
+
 app = Flask(__name__)
 app.config.update(
-    SECRET_KEY=os.environ.get("SECRET_KEY", "dev-only-change-me"),
+    SECRET_KEY=secret_key or "dev-only-change-me",
+    MAX_CONTENT_LENGTH=11 * 1024 * 1024,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.environ.get("FLASK_ENV", "").lower() == "production",
+    SESSION_COOKIE_SECURE=is_production,
 )
+
+oauth = OAuth(app)
+google_client_id = os.environ.get("GOOGLE_CLIENT_ID")
+google_client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+google_oauth_enabled = bool(google_client_id and google_client_secret)
+if google_oauth_enabled:
+    oauth.register(
+        name="google",
+        client_id=google_client_id,
+        client_secret=google_client_secret,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 MODEL = "openai/gpt-oss-120b"
@@ -202,6 +228,61 @@ def login():
     return jsonify({"authenticated": True, "user": {"id": row["id"], "email": row["email"]}})
 
 
+@app.route("/auth/google")
+def google_login():
+    if not google_oauth_enabled:
+        flash("Google sign-in is not configured yet. You can sign in with email and password.", "error")
+        return redirect(url_for("signin"))
+
+    redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI") or url_for("google_callback", _external=True)
+    return oauth.google.authorize_redirect(redirect_uri)
+
+
+@app.route("/auth/google/callback")
+def google_callback():
+    if not google_oauth_enabled:
+        flash("Google sign-in is not configured yet. You can sign in with email and password.", "error")
+        return redirect(url_for("signin"))
+
+    try:
+        oauth.google.authorize_access_token()
+        profile = oauth.google.get("userinfo").json()
+        email = (profile.get("email") or "").strip().lower()
+        if not profile.get("sub") or not email or profile.get("email_verified") is not True:
+            flash("Google did not provide a verified email address. Please try again.", "error")
+            return redirect(url_for("signin"))
+
+        with engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT id FROM users WHERE email = :email"), {"email": email}
+            ).mappings().first()
+            if row:
+                user_id = row["id"]
+            else:
+                user_id = str(uuid.uuid4())
+                conn.execute(
+                    text("""
+                        INSERT INTO users (id, email, password_hash, created_at)
+                        VALUES (:id, :email, :password_hash, :created_at)
+                    """),
+                    {
+                        "id": user_id,
+                        "email": email,
+                        "password_hash": generate_password_hash(uuid.uuid4().hex),
+                        "created_at": time.time(),
+                    },
+                )
+
+        session.clear()
+        session["user_id"] = user_id
+        session.permanent = True
+        return redirect(url_for("index"))
+    except Exception:
+        app.logger.exception("Google sign-in failed")
+        flash("Google sign-in failed. Please try again or use email and password.", "error")
+        return redirect(url_for("signin"))
+
+
 @app.route("/api/auth/logout", methods=["POST"])
 def logout():
     session.clear()
@@ -309,12 +390,36 @@ def rename_chat(chat_id):
 @login_required
 def send_message(chat_id):
     data = request.get_json(silent=True) or {}
-    user_message = (data.get("message") or "").strip()
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid request body."}), 400
+    raw_message = data.get("message", "")
+    if not isinstance(raw_message, str):
+        return jsonify({"error": "Message must be text."}), 400
+    user_message = raw_message.strip()
     image_data_url = data.get("image")
     image_name = data.get("image_name")
 
     if not user_message and not image_data_url:
         return jsonify({"error": "Message cannot be empty"}), 400
+    if len(user_message) > 12000:
+        return jsonify({"error": "Messages must be 12,000 characters or fewer."}), 400
+
+    if image_data_url:
+        if not isinstance(image_data_url, str) or len(image_data_url) > 11 * 1024 * 1024:
+            return jsonify({"error": "Image is too large. Maximum image size is 8 MB."}), 413
+        image_match = re.fullmatch(
+            r"data:image/(?:jpeg|png|webp|gif);base64,([A-Za-z0-9+/]+={0,2})",
+            image_data_url,
+        )
+        if not image_match:
+            return jsonify({"error": "Please attach a valid PNG, JPEG, WebP, or GIF image."}), 400
+        try:
+            image_bytes = base64.b64decode(image_match.group(1), validate=True)
+        except (binascii.Error, ValueError):
+            return jsonify({"error": "The attached image could not be read."}), 400
+        if not image_bytes or len(image_bytes) > 8 * 1024 * 1024:
+            return jsonify({"error": "Image is too large. Maximum image size is 8 MB."}), 413
+        image_name = os.path.basename(str(image_name or "image"))[:255]
 
     user = current_user()
     chat = chat_owned(chat_id, user["id"])
@@ -386,8 +491,9 @@ def send_message(chat_id):
 
         return jsonify({"reply": reply, "title": new_title})
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Message generation failed for chat %s", chat_id)
+        return jsonify({"error": "Patrick couldn't generate a reply right now. Please try again."}), 502
 
 
 if __name__ == "__main__":
@@ -399,5 +505,5 @@ if __name__ == "__main__":
         print("⚠️  SECRET_KEY is using the development fallback. Set a strong SECRET_KEY in .env/Render.")
 
     port = int(os.environ.get("PORT", 5000))
-    debug_mode = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
+    debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
     app.run(debug=debug_mode, host="0.0.0.0", port=port)
