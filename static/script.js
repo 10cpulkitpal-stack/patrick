@@ -21,6 +21,12 @@ const attachmentPreview = document.getElementById('attachmentPreview');
 const attachmentThumb = document.getElementById('attachmentThumb');
 const attachmentName = document.getElementById('attachmentName');
 const attachmentRemove = document.getElementById('attachmentRemove');
+const accountButton = document.getElementById('accountButton');
+const profileDialog = document.getElementById('profileDialog');
+const profileForm = document.getElementById('profileForm');
+const profileError = document.getElementById('profileError');
+const passwordFeedback = document.getElementById('passwordFeedback');
+const passwordButton = document.getElementById('passwordButton');
 
 let pendingAttachment = null; // { kind: 'image'|'text'|'unsupported', name, dataUrl?, textContent? }
 
@@ -626,6 +632,73 @@ inputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') sendMessage();
 });
 newChatBtn.addEventListener('click', createNewChat);
+
+// ---------- account profile ----------
+
+accountButton.addEventListener('click', () => {
+  profileError.textContent = '';
+  passwordFeedback.textContent = '';
+  profileDialog.showModal();
+});
+
+profileDialog.addEventListener('click', (event) => {
+  if (event.target === profileDialog) profileDialog.close();
+});
+
+profileForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  profileError.textContent = '';
+  const button = profileForm.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: document.getElementById('profileName').value })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      profileError.textContent = data.error || 'Unable to save your name.';
+      return;
+    }
+    document.getElementById('accountName').textContent = data.name;
+    document.getElementById('accountAvatar').textContent = data.name.trim().charAt(0).toUpperCase();
+    profileError.textContent = 'Name saved.';
+  } catch (error) {
+    profileError.textContent = 'Network error. Please try again.';
+  } finally {
+    button.disabled = false;
+  }
+});
+
+passwordButton.addEventListener('click', async () => {
+  passwordFeedback.textContent = '';
+  const currentPassword = document.getElementById('currentPassword');
+  const newPassword = document.getElementById('newPassword');
+  passwordButton.disabled = true;
+  try {
+    const res = await fetch('/api/profile/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        current_password: currentPassword ? currentPassword.value : '',
+        new_password: newPassword.value
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      passwordFeedback.textContent = data.error || 'Unable to update password.';
+      return;
+    }
+    if (currentPassword) currentPassword.value = '';
+    newPassword.value = '';
+    passwordFeedback.textContent = 'Password updated.';
+  } catch (error) {
+    passwordFeedback.textContent = 'Network error. Please try again.';
+  } finally {
+    passwordButton.disabled = false;
+  }
+});
 
 // ---------- init ----------
 

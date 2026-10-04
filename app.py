@@ -100,9 +100,22 @@ def init_db():
                 id VARCHAR(36) PRIMARY KEY,
                 email VARCHAR(320) NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
-                created_at DOUBLE PRECISION NOT NULL
+                created_at DOUBLE PRECISION NOT NULL,
+                display_name VARCHAR(120),
+                auth_provider VARCHAR(20) NOT NULL DEFAULT 'password'
             )
         """))
+        # Add profile fields to existing databases without changing user data.
+        user_columns = {row["name"] for row in conn.execute(text("PRAGMA table_info(users)")).mappings()} if DATABASE_URL.startswith("sqlite") else {
+            row["column_name"] for row in conn.execute(text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'users' AND table_schema = current_schema()
+            """)).mappings()
+        }
+        if "display_name" not in user_columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN display_name VARCHAR(120)"))
+        if "auth_provider" not in user_columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN auth_provider VARCHAR(20) NOT NULL DEFAULT 'password'"))
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS chats (
                 id VARCHAR(36) PRIMARY KEY,
@@ -132,7 +145,7 @@ def current_user():
     if not user_id:
         return None
     with engine.connect() as conn:
-        row = conn.execute(text("SELECT id, email FROM users WHERE id = :id"), {"id": user_id}).mappings().first()
+        row = conn.execute(text("SELECT id, email, display_name, auth_provider FROM users WHERE id = :id"), {"id": user_id}).mappings().first()
     return dict(row) if row else None
 
 
@@ -177,7 +190,43 @@ def me():
     user = current_user()
     if not user:
         return jsonify({"authenticated": False}), 401
-    return jsonify({"authenticated": True, "user": {"id": user["id"], "email": user["email"]}})
+    return jsonify({"authenticated": True, "user": user})
+
+
+@app.route("/api/profile", methods=["PATCH"])
+@login_required
+def update_profile():
+    user = current_user()
+    data = request.get_json(silent=True) or {}
+    display_name = (data.get("name") or "").strip()
+    if not display_name or len(display_name) > 120:
+        return jsonify({"error": "Name must be between 1 and 120 characters."}), 400
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE users SET display_name = :name WHERE id = :id"), {"name": display_name, "id": user["id"]})
+    return jsonify({"name": display_name, "email": user["email"]})
+
+
+@app.route("/api/profile/password", methods=["POST"])
+@login_required
+def update_password():
+    user = current_user()
+    data = request.get_json(silent=True) or {}
+    current_password = data.get("current_password") or ""
+    new_password = data.get("new_password") or ""
+    google_verified_recently = time.time() - session.get("google_verified_at", 0) < 300
+    if len(new_password) < 8:
+        return jsonify({"error": "New password must be at least 8 characters."}), 400
+
+    with engine.begin() as conn:
+        row = conn.execute(text("SELECT password_hash, auth_provider FROM users WHERE id = :id"), {"id": user["id"]}).mappings().first()
+        if row["auth_provider"] != "google" and not google_verified_recently and not check_password_hash(row["password_hash"], current_password):
+            return jsonify({"error": "Current password is incorrect."}), 400
+        provider = "both" if row["auth_provider"] == "google" else row["auth_provider"]
+        conn.execute(text("UPDATE users SET password_hash = :password_hash, auth_provider = :provider WHERE id = :id"), {
+            "password_hash": generate_password_hash(new_password), "provider": provider, "id": user["id"]
+        })
+    session.pop("google_verified_at", None)
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/auth/register", methods=["POST"])
@@ -185,18 +234,21 @@ def register():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
+    display_name = (data.get("name") or "").strip()
 
     if "@" not in email or len(email) > 320:
         return jsonify({"error": "Enter a valid email address."}), 400
     if len(password) < 8:
         return jsonify({"error": "Password must be at least 8 characters."}), 400
+    if not display_name or len(display_name) > 120:
+        return jsonify({"error": "Name must be between 1 and 120 characters."}), 400
 
     try:
         with engine.begin() as conn:
             user_id = str(uuid.uuid4())
             conn.execute(
-                text("INSERT INTO users (id, email, password_hash, created_at) VALUES (:id, :email, :password_hash, :created_at)"),
-                {"id": user_id, "email": email, "password_hash": generate_password_hash(password), "created_at": time.time()},
+                text("INSERT INTO users (id, email, password_hash, created_at, display_name, auth_provider) VALUES (:id, :email, :password_hash, :created_at, :name, 'password')"),
+                {"id": user_id, "email": email, "password_hash": generate_password_hash(password), "created_at": time.time(), "name": display_name},
             )
     except IntegrityError:
         return jsonify({"error": "An account with that email already exists."}), 409
@@ -204,7 +256,7 @@ def register():
     session.clear()
     session["user_id"] = user_id
     session.permanent = True
-    return jsonify({"authenticated": True, "user": {"id": user_id, "email": email}}), 201
+    return jsonify({"authenticated": True, "user": {"id": user_id, "email": email, "display_name": display_name}}), 201
 
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -254,27 +306,32 @@ def google_callback():
 
         with engine.begin() as conn:
             row = conn.execute(
-                text("SELECT id FROM users WHERE email = :email"), {"email": email}
+                text("SELECT id, display_name FROM users WHERE email = :email"), {"email": email}
             ).mappings().first()
             if row:
                 user_id = row["id"]
+                conn.execute(text("UPDATE users SET auth_provider = 'both', display_name = COALESCE(NULLIF(display_name, ''), :name) WHERE id = :id"), {
+                    "name": (profile.get("name") or "")[:120], "id": user_id
+                })
             else:
                 user_id = str(uuid.uuid4())
                 conn.execute(
                     text("""
-                        INSERT INTO users (id, email, password_hash, created_at)
-                        VALUES (:id, :email, :password_hash, :created_at)
+                        INSERT INTO users (id, email, password_hash, created_at, display_name, auth_provider)
+                        VALUES (:id, :email, :password_hash, :created_at, :name, 'google')
                     """),
                     {
                         "id": user_id,
                         "email": email,
                         "password_hash": generate_password_hash(uuid.uuid4().hex),
                         "created_at": time.time(),
+                        "name": (profile.get("name") or "")[:120],
                     },
                 )
 
         session.clear()
         session["user_id"] = user_id
+        session["google_verified_at"] = time.time()
         session.permanent = True
         return redirect(url_for("index"))
     except Exception:
@@ -294,9 +351,11 @@ def logout():
 @app.route("/")
 def index():
     # Keep authentication completely separate from the chat page.
-    if not current_user():
+    user = current_user()
+    if not user:
         return redirect(url_for("signin"))
-    return render_template("index.html")
+    can_set_password = user["auth_provider"] == "google" or time.time() - session.get("google_verified_at", 0) < 300
+    return render_template("index.html", user=user, can_set_password=can_set_password)
 
 
 @app.route("/signin")

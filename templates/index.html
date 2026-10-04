@@ -29,7 +29,41 @@
       </button>
     </div>
     <div class="chat-list" id="chatList"></div>
+    <div class="account-footer">
+      <button type="button" class="account-button" id="accountButton" aria-haspopup="dialog" aria-controls="profileDialog">
+        <span class="account-avatar" id="accountAvatar">{{ (user.display_name or user.email.split('@')[0])[:1]|upper }}</span>
+        <span class="account-label"><strong id="accountName">{{ user.display_name or user.email.split('@')[0] }}</strong><small>{{ user.email }}</small></span>
+        <span class="account-menu-mark" aria-hidden="true">•••</span>
+      </button>
+    </div>
   </div>
+
+  <dialog class="profile-dialog" id="profileDialog" aria-labelledby="profileTitle">
+    <form method="dialog" class="profile-dialog-head">
+      <div><h2 id="profileTitle">Profile</h2><p>Manage your account details.</p></div>
+      <button class="profile-close" aria-label="Close profile">×</button>
+    </form>
+    <form id="profileForm" class="profile-form">
+      <label for="profileName">Name</label>
+      <input id="profileName" name="name" maxlength="120" required value="{{ user.display_name or user.email.split('@')[0] }}">
+      <label for="profileEmail">Email</label>
+      <input id="profileEmail" type="email" readonly value="{{ user.email }}">
+      <div id="profileError" class="profile-feedback" role="status"></div>
+      <button class="profile-primary" type="submit">Save name</button>
+    </form>
+    <div class="profile-security">
+      <h3>Password</h3>
+      <p class="profile-password-note">Passwords are stored securely and can’t be viewed. You can set a new one here.</p>
+      {% if not can_set_password %}
+      <label for="currentPassword">Current password</label>
+      <input id="currentPassword" type="password" autocomplete="current-password" placeholder="Current password">
+      {% endif %}
+      <label for="newPassword">New password</label>
+      <input id="newPassword" type="password" autocomplete="new-password" minlength="8" placeholder="At least 8 characters">
+      <div id="passwordFeedback" class="profile-feedback" role="status"></div>
+      <button class="profile-primary" id="passwordButton" type="button">Update password</button>
+    </div>
+  </dialog>
 
   <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 

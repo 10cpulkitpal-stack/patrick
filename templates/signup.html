@@ -23,6 +23,8 @@
   </a>
   <div class="auth-divider"><span>or sign up with email</span></div>
   <form id="authForm">
+    <label for="name">Name</label>
+    <input id="name" type="text" autocomplete="name" placeholder="Your name" maxlength="120" required>
     <label for="email">Email</label>
     <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
     <label for="password">Password</label>
@@ -39,7 +41,7 @@ form.addEventListener('submit',async(e)=>{
  e.preventDefault(); error.textContent='';
  const button=form.querySelector('button'); button.disabled=true; button.textContent='Creating...';
  try {
-   const res=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value})});
+   const res=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('name').value,email:document.getElementById('email').value,password:document.getElementById('password').value})});
    const data=await res.json();
    if(!res.ok){error.textContent=data.error||'Unable to create account.';return;}
    window.location.href='/';
