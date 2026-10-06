@@ -3,7 +3,7 @@
 from alembic import op
 import sqlalchemy as sa
 
-from models import Base
+from backend.models import Base
 
 revision = "20261006_0001"
 down_revision = None

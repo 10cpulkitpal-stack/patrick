@@ -10,7 +10,7 @@ from email.message import EmailMessage
 from flask import request, url_for
 from sqlalchemy import select
 
-from models import EmailVerificationToken
+from backend.models import EmailVerificationToken
 
 
 class AuthService:

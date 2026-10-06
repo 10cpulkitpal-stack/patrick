@@ -1,4 +1,4 @@
-from ai import build_system_prompt
+from backend.ai import build_system_prompt
 
 
 def test_prompt_uses_user_name_and_date():

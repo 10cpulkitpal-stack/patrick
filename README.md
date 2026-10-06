@@ -47,25 +47,23 @@ https://patrick-c89f.onrender.com/
 ```text
 patrick-chatbot/
 │
-├── app.py                 # Flask app and HTTP routes
-├── ai.py                  # User-aware system prompt construction
-├── auth.py                # Email verification and mail delivery service
-├── chats.py               # ORM-backed chat persistence and history
-├── models.py              # SQLAlchemy ORM schema
+├── backend/
+│   ├── __init__.py
+│   ├── app.py              # Flask app and HTTP routes
+│   ├── ai.py               # AI providers and system prompt
+│   ├── auth.py             # Email verification and mail delivery
+│   ├── chats.py            # ORM-backed chat persistence and history
+│   ├── models.py           # SQLAlchemy ORM schema
+│   └── migrations/         # Alembic database migrations
+├── frontend/
+│   ├── templates/          # Flask-rendered pages
+│   └── static/             # CSS, JavaScript, and browser assets
 ├── alembic.ini
-├── migrations/            # Alembic database migrations
 ├── tests/                 # Automated unit tests
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
 ├── patrick.db (local SQLite database; created by migrations)
-│
-├── templates/
-│   └── index.html
-│
-└── static/
-    ├── script.js
-    └── style.css
 ```
 
 > Local conversations are stored in `patrick.db`. Keep the database private; it contains account and chat data.
@@ -136,7 +134,7 @@ alembic upgrade head
 ### 6. Run locally
 
 ```bash
-gunicorn --bind 127.0.0.1:5000 app:app
+gunicorn --bind 127.0.0.1:5000 backend.app:app
 ```
 
 The server will normally start at:
@@ -145,7 +143,7 @@ The server will normally start at:
 http://127.0.0.1:5000
 ```
 
-Open the address in your browser. For local debugging, set `FLASK_DEBUG=true` and run `python app.py`; the debug server binds only to `127.0.0.1`.
+Open the address in your browser. Run commands from the repository root. For local debugging, set `FLASK_DEBUG=true` and run `python -m backend.app`; the debug server binds only to `127.0.0.1`.
 
 ## 🔑 Environment Variables
 
@@ -359,7 +357,7 @@ Patrick uses SQLAlchemy ORM models with Alembic-managed schema migrations. Local
 patrick.db
 ```
 
-Set `DATABASE_URL` to a PostgreSQL connection string for a hosted deployment. Run `alembic upgrade head` as a deployment pre-start step, before Gunicorn launches workers. On Render, set the service's **Pre-Deploy Command** to `alembic upgrade head` when available; otherwise use a Start Command of `alembic upgrade head && gunicorn app:app`. Do not create schema at Python import time.
+Set `DATABASE_URL` to a PostgreSQL connection string for a hosted deployment. Run `alembic upgrade head` from the repository root as a deployment pre-start step, before Gunicorn launches workers. On Render, set the service's **Pre-Deploy Command** to `alembic upgrade head` when available; otherwise use a Start Command of `alembic upgrade head && gunicorn backend.app:app`. Do not create schema at Python import time.
 
 ## 🔒 Security Notes
 
@@ -385,10 +383,10 @@ PUBLIC_BASE_URL=https://patrick-c89f.onrender.com
 Run the application with:
 
 ```bash
-python app.py
+python -m backend.app
 ```
 
-The production server is Gunicorn (`gunicorn app:app`). Set the Render health-check path to `/healthz`. Run migrations before deploying code that requires a new schema revision.
+The production server is Gunicorn (`gunicorn backend.app:app`). Set the Render health-check path to `/healthz`. Run migrations before deploying code that requires a new schema revision.
 
 Run the automated tests with:
 

@@ -1,4 +1,4 @@
-from models import Base, Chat, Message
+from backend.models import Base, Chat, Message
 
 
 def test_chat_and_message_indexes_are_declared():

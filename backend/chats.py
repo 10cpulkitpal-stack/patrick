@@ -2,7 +2,7 @@
 
 from sqlalchemy import select
 
-from models import Chat, Message
+from backend.models import Chat, Message
 
 
 class ChatStore:

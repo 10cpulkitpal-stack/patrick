@@ -1,8 +1,8 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from chats import ChatStore
-from models import Base, Chat, Message, User
+from backend.chats import ChatStore
+from backend.models import Base, Chat, Message, User
 
 
 def test_chat_store_scopes_chats_and_keeps_recent_message_history():

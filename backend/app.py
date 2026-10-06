@@ -22,10 +22,10 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from werkzeug.middleware.proxy_fix import ProxyFix
-from models import Chat, EmailVerificationToken, Message, RateLimitCounter, User
-from ai import AIService
-from chats import ChatStore
-from auth import AuthService
+from backend.models import Chat, EmailVerificationToken, Message, RateLimitCounter, User
+from backend.ai import AIService
+from backend.chats import ChatStore
+from backend.auth import AuthService
 
 load_dotenv()
 
@@ -42,7 +42,12 @@ secret_key = os.environ.get("SECRET_KEY")
 if is_production and not secret_key:
     raise RuntimeError("Set a strong SECRET_KEY before running in production.")
 
-app = Flask(__name__)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+app = Flask(
+    __name__,
+    template_folder=os.path.join(PROJECT_ROOT, "frontend", "templates"),
+    static_folder=os.path.join(PROJECT_ROOT, "frontend", "static"),
+)
 app.config.update(
     SECRET_KEY=secret_key or "dev-only-change-me",
     MAX_CONTENT_LENGTH=11 * 1024 * 1024,
