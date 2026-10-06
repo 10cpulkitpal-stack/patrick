@@ -29,6 +29,8 @@ const profileForm = document.getElementById('profileForm');
 const profileError = document.getElementById('profileError');
 const passwordFeedback = document.getElementById('passwordFeedback');
 const passwordButton = document.getElementById('passwordButton');
+const logoutButton = document.getElementById('logoutButton');
+const logoutFeedback = document.getElementById('logoutFeedback');
 
 let pendingAttachment = null; // { kind: 'image'|'text'|'unsupported', name, dataUrl?, textContent? }
 
@@ -55,7 +57,7 @@ function renderMarkdown(text) {
   return window.DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
 }
 
-function addMessage(text, role) {
+function addMessage(text, role, attachment = null) {
   // role: 'user' | 'bot' | 'error'
   const row = document.createElement('div');
   row.className = 'message-row ' + role;
@@ -78,6 +80,8 @@ function addMessage(text, role) {
   } else {
     body.textContent = text;
   }
+
+  if (role === 'user' && attachment) attachBadgeToRow(row, attachment);
 
   row.appendChild(body);
 
@@ -124,8 +128,13 @@ const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
 
 function setSidebarOpen(open) {
   sidebar.classList.toggle('collapsed', !open);
-  sidebarOpen.classList.toggle('is-hidden', open || !isMobile());
-  sidebarBackdrop.classList.toggle('visible', open && isMobile());
+  syncSidebarLayout();
+}
+
+function syncSidebarLayout() {
+  const collapsed = sidebar.classList.contains('collapsed');
+  sidebarOpen.classList.toggle('is-hidden', !collapsed || !isMobile());
+  sidebarBackdrop.classList.toggle('visible', !collapsed && isMobile());
 }
 
 function toggleSidebar() {
@@ -145,11 +154,10 @@ if (isMobile()) {
   setSidebarOpen(false);
 }
 
-// If the window is resized/rotated across the mobile breakpoint, keep the
-// sidebar in its normal (always-open) desktop state.
-window.addEventListener('resize', () => {
-  setSidebarOpen(!isMobile());
-});
+// Resize only updates viewport-specific controls; it preserves the user's
+// collapsed/open choice across resize and device rotation.
+window.addEventListener('resize', syncSidebarLayout);
+syncSidebarLayout();
 
 // ---------- theme (dark / light) ----------
 
@@ -177,12 +185,13 @@ if (SpeechRecognitionAPI) {
   recognition = new SpeechRecognitionAPI();
   recognition.continuous = false;
   recognition.interimResults = false;
-  recognition.lang = 'en-US';
+  recognition.lang = navigator.language || 'en-US';
 
   recognition.onresult = (event) => {
     const transcript = event.results[0][0].transcript;
     inputEl.value = transcript;
-    sendMessage();
+    resizeComposer();
+    inputEl.focus();
   };
 
   recognition.onerror = (event) => {
@@ -240,8 +249,19 @@ function speak(text) {
   if (!voiceOutputEnabled || !window.speechSynthesis) return;
   window.speechSynthesis.cancel();
   const spokenText = text
-    .replace(/```[\s\S]*?```/g, 'Code block omitted.')
-    .replace(/`([^`]+)`/g, '$1');
+    .replace(/```[^\n]*\n?([\s\S]*?)```/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s*/gm, '')
+    .replace(/^\s*>\s?/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+[.)]\s+/gm, '')
+    .replace(/\|/g, ' ')
+    .replace(/[*_~]/g, '')
+    .replace(/`/g, '')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
   const utterance = new SpeechSynthesisUtterance(spokenText);
   utterance.rate = 1;
   utterance.pitch = 1;
@@ -425,7 +445,7 @@ async function openChat(chatId) {
     showEmptyState();
   } else {
     chat.messages.forEach(m => {
-      addMessage(m.content, m.role === 'user' ? 'user' : 'bot');
+      addMessage(m.content, m.role === 'user' ? 'user' : 'bot', m.attachment || null);
     });
   }
 
@@ -437,23 +457,19 @@ async function openChat(chatId) {
 }
 
 async function deleteChat(chatId) {
-  await fetch('/api/chats/' + chatId, { method: 'DELETE' });
-
-  if (chatId === currentChatId) {
-    currentChatId = null;
-    messagesEl.innerHTML = '';
-    chatTitleEl.textContent = 'New conversation';
-    inputEl.disabled = true;
-  }
+  const wasCurrent = chatId === currentChatId;
+  const deleted = await fetch('/api/chats/' + chatId, { method: 'DELETE' });
+  if (!deleted.ok) return;
 
   const res = await fetch('/api/chats');
   const chats = await res.json();
 
-  if (chats.length > 0) {
+  if (!wasCurrent) {
+    await loadChatList(currentChatId);
+  } else if (chats.length > 0) {
     await openChat(chats[0].id);
   } else {
-    showEmptyState();
-    await loadChatList(null);
+    await createNewChat();
   }
 }
 
@@ -512,11 +528,13 @@ fileInput.addEventListener('change', () => {
     const reader = new FileReader();
     reader.onload = () => {
       let content = reader.result;
+      const truncated = content.length > MAX_TEXT_CHARS;
       if (content.length > MAX_TEXT_CHARS) {
-        content = content.slice(0, MAX_TEXT_CHARS) + '\n... (truncated)';
+        content = content.slice(0, MAX_TEXT_CHARS);
       }
-      pendingAttachment = { kind: 'text', name: file.name, textContent: content };
+      pendingAttachment = { kind: 'text', name: file.name, textContent: content, truncated };
       showAttachmentPreview();
+      if (truncated) addMessage(`Only the first ${MAX_TEXT_CHARS.toLocaleString()} characters of "${file.name}" will be sent.`, 'error');
     };
     reader.readAsText(file);
   } else {
@@ -531,11 +549,22 @@ function attachBadgeToRow(row, attachment) {
   badge.className = 'msg-attachment-chip';
 
   if (attachment.kind === 'image') {
-    badge.innerHTML = `<img src="${attachment.dataUrl}" alt=""><span>${escapeHtml(attachment.name)}</span>`;
+    const image = document.createElement('img');
+    image.src = attachment.dataUrl;
+    image.alt = '';
+    badge.appendChild(image);
   } else {
     const icon = attachment.kind === 'text' ? '📄' : '📎';
-    badge.innerHTML = `<span class="msg-attachment-icon">${icon}</span><span>${escapeHtml(attachment.name)}</span>`;
+    const iconNode = document.createElement('span');
+    iconNode.className = 'msg-attachment-icon';
+    iconNode.textContent = icon;
+    badge.appendChild(iconNode);
   }
+  const label = document.createElement('span');
+  label.textContent = attachment.truncated
+    ? `${attachment.name} · first ${MAX_TEXT_CHARS.toLocaleString()} characters`
+    : attachment.name;
+  badge.appendChild(label);
 
   body.appendChild(badge);
 }
@@ -552,11 +581,28 @@ function tryHandleGoogleSearchCommand(text) {
   if (!query) return false;
 
   const url = 'https://www.google.com/search?q=' + encodeURIComponent(query);
+  // Open the tab inside the original click gesture so browsers do not block it.
   window.open(url, '_blank');
 
   addMessage(text, 'user');
-  addMessage(`Opening a Google search for "${query}" in a new tab.`, 'bot');
   inputEl.value = '';
+  const chatId = currentChatId;
+  fetch('/api/chats/' + chatId + '/shortcut', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command: text, query })
+  }).then(async (res) => {
+    const data = await res.json();
+    if (!res.ok) {
+      addMessage('Error: ' + (data.error || 'Unable to save this search.'), 'error');
+      return;
+    }
+    addMessage(data.reply, 'bot');
+    if (data.title && data.title !== chatTitleEl.textContent) {
+      chatTitleEl.textContent = data.title;
+      loadChatList(chatId);
+    }
+  }).catch((error) => addMessage('Network error: ' + error.message, 'error'));
   return true;
 }
 
@@ -577,22 +623,22 @@ async function sendMessage() {
     ? (attachment.kind === 'image' ? '📷 Sent an image' : '📎 Sent a file')
     : '');
 
-  const userRow = addMessage(displayText, 'user');
-  if (attachment) attachBadgeToRow(userRow, attachment);
+  addMessage(displayText, 'user', attachment);
 
   const body = { message: text };
   if (attachment && attachment.kind === 'image') {
     body.image = attachment.dataUrl;
     body.image_name = attachment.name;
   } else if (attachment && attachment.kind === 'text') {
-    body.message = (text ? text + '\n\n' : '') +
-      `[Attached file: ${attachment.name}]\n\`\`\`\n${attachment.textContent}\n\`\`\``;
+    body.file_text = attachment.textContent;
+    body.file_name = attachment.name;
+    body.file_truncated = attachment.truncated === true;
   } else if (attachment && attachment.kind === 'unsupported') {
-    body.message = (text ? text + '\n\n' : '') +
-      `[User attached a file named "${attachment.name}" but its contents can't be read by the assistant. Supported: images and plain text files.]`;
+    body.unsupported_name = attachment.name;
   }
 
   inputEl.value = '';
+  resizeComposer();
   clearAttachment();
   sendBtn.disabled = true;
   addTyping();
@@ -629,8 +675,18 @@ async function sendMessage() {
 
 sendBtn.addEventListener('click', sendMessage);
 inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') sendMessage();
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+    e.preventDefault();
+    sendMessage();
+  }
 });
+inputEl.addEventListener('input', resizeComposer);
+
+function resizeComposer() {
+  inputEl.dataset.lines = '1';
+  const visibleLines = Math.max(1, Math.min(8, Math.ceil(inputEl.scrollHeight / 24)));
+  inputEl.dataset.lines = String(visibleLines);
+}
 newChatBtn.addEventListener('click', createNewChat);
 
 // ---------- account profile ----------
@@ -697,6 +753,24 @@ passwordButton.addEventListener('click', async () => {
     passwordFeedback.textContent = 'Network error. Please try again.';
   } finally {
     passwordButton.disabled = false;
+  }
+});
+
+logoutButton.addEventListener('click', async () => {
+  logoutFeedback.textContent = '';
+  logoutButton.disabled = true;
+  try {
+    const res = await fetch('/api/auth/logout', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      logoutFeedback.textContent = data.error || 'Unable to sign out.';
+      logoutButton.disabled = false;
+      return;
+    }
+    window.location.href = '/signin';
+  } catch (error) {
+    logoutFeedback.textContent = 'Network error. Please try again.';
+    logoutButton.disabled = false;
   }
 });
 

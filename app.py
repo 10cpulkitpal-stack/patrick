@@ -59,8 +59,11 @@ if google_oauth_enabled:
     )
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-MODEL = "openai/gpt-oss-120b"
-VISION_MODEL = "qwen/qwen3.6-27b"
+MODEL = os.environ.get("GROQ_TEXT_MODEL", "openai/gpt-oss-120b").strip()
+TEXT_FALLBACK_MODEL = os.environ.get("GROQ_TEXT_FALLBACK_MODEL", "openai/gpt-oss-20b").strip()
+VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip()
+VISION_FALLBACK_MODEL = os.environ.get("GROQ_VISION_FALLBACK_MODEL", "").strip()
+MAX_OUTPUT_TOKENS = max(1024, min(16384, int(os.environ.get("GROQ_MAX_OUTPUT_TOKENS", "4096"))))
 DAILY_MESSAGE_LIMIT = max(1, int(os.environ.get("DAILY_MESSAGE_LIMIT", "100")))
 
 SYSTEM_PROMPT = """You are Patrick, a helpful AI assistant.
@@ -169,6 +172,20 @@ def init_db():
                 FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE
             )
         """))
+        message_columns = {row["name"] for row in conn.execute(text("PRAGMA table_info(messages)")).mappings()} if DATABASE_URL.startswith("sqlite") else {
+            row["column_name"] for row in conn.execute(text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'messages' AND table_schema = current_schema()
+            """)).mappings()
+        }
+        for column, definition in (
+            ("attachment_type", "VARCHAR(20)"),
+            ("attachment_name", "VARCHAR(255)"),
+            ("attachment_data", "TEXT"),
+            ("attachment_truncated", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ):
+            if column not in message_columns:
+                conn.execute(text(f"ALTER TABLE messages ADD COLUMN {column} {definition}"))
 
 
 init_db()
@@ -214,10 +231,91 @@ def make_title(first_message):
 def get_chat_messages(chat_id):
     with engine.connect() as conn:
         rows = conn.execute(
-            text("SELECT role, content FROM messages WHERE chat_id = :chat_id ORDER BY created_at ASC, id ASC"),
+            text("SELECT role, content, attachment_type, attachment_name, attachment_data, attachment_truncated FROM messages WHERE chat_id = :chat_id ORDER BY created_at ASC, id ASC"),
             {"chat_id": chat_id},
         ).mappings().all()
-    return [{"role": r["role"], "content": r["content"]} for r in rows]
+    messages = []
+    for row in rows:
+        message = {"role": row["role"], "content": row["content"]}
+        if row["attachment_type"]:
+            attachment = {
+                "kind": row["attachment_type"],
+                "name": row["attachment_name"] or "attachment",
+                "truncated": bool(row["attachment_truncated"]),
+            }
+            if row["attachment_type"] == "image":
+                attachment["data_url"] = row["attachment_data"]
+            message["attachment"] = attachment
+        messages.append(message)
+    return messages
+
+
+def get_model_history(chat_id):
+    """Build a bounded prompt history while retaining recent uploaded context."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT role, content, attachment_type, attachment_name, attachment_data, attachment_truncated
+            FROM messages WHERE chat_id = :chat_id ORDER BY created_at DESC, id DESC LIMIT 16
+        """), {"chat_id": chat_id}).mappings().all()
+    rows = list(reversed(rows))
+    history = []
+    remaining_chars = 32000
+    image_indices = [index for index, row in enumerate(rows) if row["role"] == "user" and row["attachment_type"] == "image"]
+    keep_image_indices = set(image_indices[-3:])
+    for index, row in enumerate(rows):
+        role = row["role"]
+        content = (row["content"] or "")[:8000]
+        attachment_type = row["attachment_type"]
+        if attachment_type == "text" and row["attachment_data"]:
+            file_text = row["attachment_data"][:6000]
+            clipped_note = " (file was truncated to 6,000 characters)" if row["attachment_truncated"] else ""
+            content = f"{content}\n\n[Attached text file: {row['attachment_name'] or 'file'}{clipped_note}]\n{file_text}".strip()
+        content = content[:remaining_chars]
+        remaining_chars -= len(content)
+        if role == "user" and attachment_type == "image" and row["attachment_data"] and index in keep_image_indices:
+            content_parts = [{"type": "text", "text": content or "Describe this image."}]
+            content_parts.append({"type": "image_url", "image_url": {"url": row["attachment_data"]}})
+            history.append({"role": role, "content": content_parts})
+        elif role == "user" and attachment_type == "image":
+            history.append({"role": role, "content": (content + "\n[An older image attachment was omitted from the recent visual context.] ").strip()})
+        elif role == "user" and attachment_type == "file":
+            history.append({"role": role, "content": (content + f"\n[Attached file: {row['attachment_name']}; file contents could not be read.] ").strip()})
+        else:
+            history.append({"role": role, "content": content})
+        if remaining_chars <= 0:
+            break
+    return history
+
+
+def generate_reply(messages, vision=False):
+    primary = VISION_MODEL if vision else MODEL
+    fallback = VISION_FALLBACK_MODEL if vision else TEXT_FALLBACK_MODEL
+    candidates = list(dict.fromkeys(model for model in (primary, fallback) if model))
+    last_error = None
+    for index, model in enumerate(candidates):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                max_tokens=MAX_OUTPUT_TOKENS,
+                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+            )
+            choice = response.choices[0] if response.choices else None
+            reply = (choice.message.content or "").strip() if choice else ""
+            if not reply:
+                last_error = RuntimeError(f"Groq model {model} returned an empty answer")
+                continue
+            if choice.finish_reason == "length":
+                reply += "\n\n_(This answer reached the output limit and may be incomplete.)_"
+            return reply
+        except Exception as error:
+            last_error = error
+            status_code = getattr(error, "status_code", None)
+            if index + 1 >= len(candidates) or status_code not in {400, 404, 410, 422}:
+                raise
+            app.logger.warning("Groq model %s unavailable; retrying with configured fallback %s", model, candidates[index + 1])
+    if last_error:
+        raise last_error
+    raise RuntimeError("No Groq model is configured")
 
 
 # ---------- request security ----------
@@ -580,8 +678,14 @@ def google_callback():
         return redirect(url_for("signin"))
 
     try:
-        oauth.google.authorize_access_token()
-        profile = oauth.google.get("userinfo").json()
+        token = oauth.google.authorize_access_token()
+        # Authlib's OpenID Connect flow validates the ID token and places its
+        # claims in the token response. This avoids depending on an API base URL.
+        profile = token.get("userinfo")
+        if not profile and token.get("id_token"):
+            profile = oauth.google.parse_id_token(token)
+        if not profile:
+            raise ValueError("Google did not return verified OpenID profile claims")
         email = (profile.get("email") or "").strip().lower()
         if not profile.get("sub") or not email or profile.get("email_verified") is not True:
             flash("Google did not provide a verified email address. Please try again.", "error")
@@ -757,8 +861,12 @@ def send_message(chat_id):
     user_message = raw_message.strip()
     image_data_url = data.get("image")
     image_name = data.get("image_name")
+    file_text = data.get("file_text", "")
+    file_name = data.get("file_name")
+    file_truncated = data.get("file_truncated") is True
+    unsupported_name = data.get("unsupported_name")
 
-    if not user_message and not image_data_url:
+    if not user_message and not image_data_url and not file_name and not unsupported_name:
         return jsonify({"error": "Message cannot be empty"}), 400
     if len(user_message) > 12000:
         return jsonify({"error": "Messages must be 12,000 characters or fewer."}), 400
@@ -779,6 +887,13 @@ def send_message(chat_id):
         if not image_bytes or len(image_bytes) > 8 * 1024 * 1024:
             return jsonify({"error": "Image is too large. Maximum image size is 8 MB."}), 413
         image_name = os.path.basename(str(image_name or "image"))[:255]
+
+    if file_name:
+        if not isinstance(file_text, str) or len(file_text) > 6000:
+            return jsonify({"error": "Text attachments must be 6,000 characters or fewer."}), 400
+        file_name = os.path.basename(str(file_name))[:255]
+    if unsupported_name:
+        unsupported_name = os.path.basename(str(unsupported_name))[:255]
 
     user = current_user()
     chat = chat_owned(chat_id, user["id"])
@@ -801,74 +916,112 @@ def send_message(chat_id):
     if today_count >= DAILY_MESSAGE_LIMIT:
         return jsonify({"error": f"Daily message limit reached ({DAILY_MESSAGE_LIMIT}). Please try again tomorrow."}), 429
 
-    existing_messages = get_chat_messages(chat_id)
     stored_user_text = user_message
+    attachment_type = None
+    attachment_name = None
+    attachment_data = None
+    attachment_truncated = False
     if image_data_url:
-        label = f"[Image attached: {image_name}]" if image_name else "[Image attached]"
-        stored_user_text = f"{label} {user_message}".strip()
+        attachment_type = "image"
+        attachment_name = image_name
+        attachment_data = image_data_url
+    elif file_name:
+        attachment_type = "text"
+        attachment_name = file_name
+        attachment_data = file_text
+        attachment_truncated = file_truncated
+    elif unsupported_name:
+        attachment_type = "file"
+        attachment_name = unsupported_name
+    if attachment_type:
+        stored_user_text = user_message
+
+    now = time.time()
+    new_title = make_title(stored_user_text or attachment_name or "New Chat") if chat["title"] == "New Chat" else chat["title"]
+    # Commit the user's turn before contacting Groq, so it remains in chat
+    # history even if generation fails or times out.
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO messages (id, chat_id, role, content, created_at,
+                                  attachment_type, attachment_name, attachment_data, attachment_truncated)
+            VALUES (:id, :chat_id, 'user', :content, :created_at,
+                    :attachment_type, :attachment_name, :attachment_data, :attachment_truncated)
+        """), {
+            "id": str(uuid.uuid4()), "chat_id": chat_id, "content": stored_user_text,
+            "created_at": now, "attachment_type": attachment_type,
+            "attachment_name": attachment_name, "attachment_data": attachment_data,
+            "attachment_truncated": attachment_truncated,
+        })
+        if new_title != chat["title"]:
+            conn.execute(text("UPDATE chats SET title = :title WHERE id = :chat_id AND user_id = :user_id"), {
+                "title": new_title, "chat_id": chat_id, "user_id": user["id"]
+            })
 
     try:
-        if image_data_url:
-            vision_messages = existing_messages + [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": user_message or "Describe this image."},
-                    {"type": "image_url", "image_url": {"url": image_data_url}},
-                ],
-            }]
-            response = client.chat.completions.create(
-                model=VISION_MODEL,
-                max_tokens=1024,
-                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + vision_messages,
-            )
-        else:
-            response = client.chat.completions.create(
-                model=MODEL,
-                max_tokens=1024,
-                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + existing_messages + [{"role": "user", "content": user_message}],
-            )
-
-        reply = response.choices[0].message.content
-        now = time.time()
-        new_title = make_title(stored_user_text) if chat["title"] == "New Chat" else chat["title"]
-
+        model_history = get_model_history(chat_id)
+        needs_vision = any(
+            message["role"] == "user" and isinstance(message["content"], list)
+            for message in model_history
+        )
+        reply = generate_reply(model_history, vision=needs_vision)
         with engine.begin() as conn:
-                conn.execute(
-                    text("""
-                        INSERT INTO messages (id, chat_id, role, content, created_at)
-                        VALUES (:id, :chat_id, 'user', :content, :created_at)
-                    """),
-                    {
-                        "id": str(uuid.uuid4()),
-                        "chat_id": chat_id,
-                        "content": stored_user_text,
-                        "created_at": now,
-                    },
-                )
-
-                conn.execute(
-                    text("""
-                        INSERT INTO messages (id, chat_id, role, content, created_at)
-                        VALUES (:id, :chat_id, 'assistant', :content, :created_at)
-                    """),
-                    {
-                        "id": str(uuid.uuid4()),
-                        "chat_id": chat_id,
-                        "content": reply,
-                        "created_at": time.time(),
-                    },
-                )
-                if new_title != chat["title"]:
-                    conn.execute(
-                        text("UPDATE chats SET title = :title WHERE id = :chat_id AND user_id = :user_id"),
-                        {"title": new_title, "chat_id": chat_id, "user_id": user["id"]},
-                    )
+            conn.execute(text("""
+                INSERT INTO messages (id, chat_id, role, content, created_at)
+                VALUES (:id, :chat_id, 'assistant', :content, :created_at)
+            """), {
+                "id": str(uuid.uuid4()), "chat_id": chat_id, "content": reply, "created_at": time.time()
+            })
 
         return jsonify({"reply": reply, "title": new_title})
 
     except Exception:
         app.logger.exception("Message generation failed for chat %s", chat_id)
         return jsonify({"error": "Patrick couldn't generate a reply right now. Please try again."}), 502
+
+
+@app.route("/api/chats/<chat_id>/shortcut", methods=["POST"])
+@login_required
+@rate_limit_ip("shortcut_ip", 60, 3600)
+def save_shortcut(chat_id):
+    user = current_user()
+    data = request.get_json(silent=True) or {}
+    command = data.get("command", "")
+    query = data.get("query", "")
+    if not isinstance(command, str) or not isinstance(query, str) or not command.strip() or not query.strip():
+        return jsonify({"error": "A search command and query are required."}), 400
+    if len(command) > 12000 or len(query) > 2000:
+        return jsonify({"error": "Search command is too long."}), 400
+    chat = chat_owned(chat_id, user["id"])
+    if not chat:
+        return jsonify({"error": "Chat not found"}), 404
+    allowed, retry_after = consume_rate_limit("message_user", user["id"], 20, 3600)
+    if not allowed:
+        response = jsonify({"error": "You have reached the hourly message limit. Please wait and try again."})
+        response.status_code = 429
+        response.headers["Retry-After"] = str(retry_after)
+        return response
+    day_start = int(time.time() // 86400) * 86400
+    with engine.begin() as conn:
+        today_count = conn.execute(text("""
+            SELECT COUNT(*) FROM messages m JOIN chats c ON c.id = m.chat_id
+            WHERE c.user_id = :user_id AND m.role = 'user' AND m.created_at >= :day_start
+        """), {"user_id": user["id"], "day_start": day_start}).scalar_one()
+        if today_count >= DAILY_MESSAGE_LIMIT:
+            return jsonify({"error": f"Daily message limit reached ({DAILY_MESSAGE_LIMIT}). Please try again tomorrow."}), 429
+        now = time.time()
+        conn.execute(text("""
+            INSERT INTO messages (id, chat_id, role, content, created_at)
+            VALUES (:id, :chat_id, 'user', :content, :created_at)
+        """), {"id": str(uuid.uuid4()), "chat_id": chat_id, "content": command.strip(), "created_at": now})
+        reply = f'Opening a Google search for "{query.strip()}" in a new tab.'
+        conn.execute(text("""
+            INSERT INTO messages (id, chat_id, role, content, created_at)
+            VALUES (:id, :chat_id, 'assistant', :content, :created_at)
+        """), {"id": str(uuid.uuid4()), "chat_id": chat_id, "content": reply, "created_at": time.time()})
+        new_title = make_title(command) if chat["title"] == "New Chat" else chat["title"]
+        if new_title != chat["title"]:
+            conn.execute(text("UPDATE chats SET title = :title WHERE id = :chat_id"), {"title": new_title, "chat_id": chat_id})
+    return jsonify({"reply": reply, "title": new_title})
 
 
 if __name__ == "__main__":

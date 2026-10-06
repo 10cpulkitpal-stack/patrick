@@ -735,21 +735,43 @@ body.light-theme .chat-menu {
   border-color: #5a5a5a;
 }
 
-.composer input {
+.composer input,
+.composer textarea {
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
   outline: none;
   color: var(--text-primary);
   font-size: 15px;
   padding: 10px 0;
+  font-family: inherit;
 }
 
-.composer input::placeholder {
+.composer textarea {
+  max-height: 200px;
+  height: 24px;
+  min-height: 24px;
+  line-height: 1.5;
+  resize: none;
+  overflow-y: auto;
+}
+
+.composer textarea[data-lines="2"] { height: 48px; }
+.composer textarea[data-lines="3"] { height: 72px; }
+.composer textarea[data-lines="4"] { height: 96px; }
+.composer textarea[data-lines="5"] { height: 120px; }
+.composer textarea[data-lines="6"] { height: 144px; }
+.composer textarea[data-lines="7"] { height: 168px; }
+.composer textarea[data-lines="8"] { height: 192px; }
+
+.composer input::placeholder,
+.composer textarea::placeholder {
   color: var(--text-faint);
 }
 
-.composer input:disabled {
+.composer input:disabled,
+.composer textarea:disabled {
   color: var(--text-faint);
 }
 
@@ -842,7 +864,8 @@ body.light-theme .chat-menu {
     display: block;
   }
   /* Prevent iOS Safari from auto-zooming the page when the composer input is focused */
-  .composer input {
+  .composer input,
+  .composer textarea {
     font-size: 16px;
   }
 }
@@ -969,6 +992,10 @@ body.light-theme .chat-menu {
 .profile-primary:disabled { opacity: .65; cursor: wait; }
 .profile-feedback { min-height: 16px; margin-top: 8px; color: var(--text-secondary); font-size: 12px; }
 .profile-security { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.profile-signout { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
+.profile-signout-button { padding: 9px 14px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); background: transparent; font: 600 13px Inter, sans-serif; cursor: pointer; }
+.profile-signout-button:hover { color: #fff; border-color: #d44; background: #b42318; }
+.profile-signout-button:disabled { opacity: .65; cursor: wait; }
 .profile-security h3 { margin: 0; font-size: 15px; }
 .profile-password-note { margin: 6px 0 2px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .google-signin:hover { background: var(--bg-main); border-color: #777; }

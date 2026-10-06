@@ -69,6 +69,10 @@
       <div id="passwordFeedback" class="profile-feedback" role="status"></div>
       <button class="profile-primary" id="passwordButton" type="button">Update password</button>
     </div>
+    <div class="profile-signout">
+      <button class="profile-signout-button" id="logoutButton" type="button">Sign out</button>
+      <div id="logoutFeedback" class="profile-feedback" role="status"></div>
+    </div>
   </dialog>
 
   <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
@@ -118,7 +122,7 @@
         <button id="attachBtn" class="composer-icon-btn" title="Attach a file or screenshot">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M17 7 8.5 15.5a3 3 0 0 0 4.24 4.24L20.5 12A5 5 0 0 0 13.5 5L6 12.5a1.5 1.5 0 0 0 2.12 2.12L15 7.7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
-        <input type="text" id="userInput" placeholder="Message Patrick..." autocomplete="off">
+        <textarea id="userInput" rows="1" placeholder="Message Patrick..." autocomplete="off"></textarea>
         <button id="micBtn" class="composer-icon-btn" title="Speak your message">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         </button>
