@@ -15,6 +15,8 @@ from urllib.parse import urlsplit
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash
 from authlib.integrations.flask_client import OAuth
 from groq import Groq
+from google import genai
+from google.genai import types as genai_types
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import create_engine, text
@@ -59,11 +61,16 @@ if google_oauth_enabled:
     )
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+gemini_client = genai.Client(api_key=gemini_api_key) if gemini_api_key else None
 MODEL = os.environ.get("GROQ_TEXT_MODEL", "openai/gpt-oss-120b").strip()
 TEXT_FALLBACK_MODEL = os.environ.get("GROQ_TEXT_FALLBACK_MODEL", "openai/gpt-oss-20b").strip()
 VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip()
 VISION_FALLBACK_MODEL = os.environ.get("GROQ_VISION_FALLBACK_MODEL", "").strip()
+GEMINI_DEFAULT_MODEL = os.environ.get("GEMINI_DEFAULT_MODEL", "gemini-3.8-flash").strip()
 MAX_OUTPUT_TOKENS = max(1024, min(16384, int(os.environ.get("GROQ_MAX_OUTPUT_TOKENS", "4096"))))
+MODEL_CACHE_SECONDS = 1800
+available_models_cache = {"expires_at": 0, "models": []}
 DAILY_MESSAGE_LIMIT = max(1, int(os.environ.get("DAILY_MESSAGE_LIMIT", "100")))
 
 SYSTEM_PROMPT = """You are Patrick, a helpful AI assistant.
@@ -137,6 +144,10 @@ def init_db():
             # Existing accounts must prove address ownership before using the
             # password login again; Google OAuth can re-verify the same address.
             conn.execute(text("ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT FALSE"))
+        if "preferred_provider" not in user_columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN preferred_provider VARCHAR(20)"))
+        if "preferred_model" not in user_columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN preferred_model VARCHAR(160)"))
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS email_verification_tokens (
                 token_hash VARCHAR(64) PRIMARY KEY,
@@ -287,9 +298,93 @@ def get_model_history(chat_id):
     return history
 
 
-def generate_reply(messages, vision=False):
-    primary = VISION_MODEL if vision else MODEL
-    fallback = VISION_FALLBACK_MODEL if vision else TEXT_FALLBACK_MODEL
+def available_models():
+    now = time.time()
+    if available_models_cache["expires_at"] > now:
+        return available_models_cache["models"]
+    models = []
+    try:
+        for model in client.models.list().data:
+            model_id = getattr(model, "id", "")
+            if not model_id or getattr(model, "active", True) is False:
+                continue
+            if any(part in model_id.lower() for part in ("whisper", "tts", "speech", "transcribe", "embedding")):
+                continue
+            models.append({"provider": "groq", "id": model_id, "label": f"Groq · {model_id}"})
+    except Exception:
+        app.logger.exception("Could not load available Groq models")
+
+    if gemini_client:
+        try:
+            for model in gemini_client.models.list():
+                actions = getattr(model, "supported_actions", None) or getattr(model, "supported_generation_methods", None) or []
+                if actions and not any("generatecontent" in str(action).lower() for action in actions):
+                    continue
+                model_id = getattr(model, "base_model_id", None) or getattr(model, "name", "")
+                model_id = model_id.removeprefix("models/")
+                if model_id and not any(part in model_id.lower() for part in ("embedding", "tts", "live", "transcri", "image")):
+                    models.append({"provider": "gemini", "id": model_id, "label": f"Gemini · {model_id}"})
+        except Exception:
+            app.logger.exception("Could not load available Gemini models")
+    models.sort(key=lambda model: (model["provider"], model["id"].lower()))
+    available_models_cache["models"] = models
+    available_models_cache["expires_at"] = now + MODEL_CACHE_SECONDS
+    return models
+
+
+def get_user_model_preference(user_id):
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT preferred_provider, preferred_model FROM users WHERE id = :id"), {"id": user_id}).mappings().first()
+    return (row["preferred_provider"], row["preferred_model"]) if row else (None, None)
+
+
+def gemini_contents(messages):
+    contents = []
+    for message in messages:
+        role = "model" if message["role"] == "assistant" else "user"
+        value = message["content"]
+        parts = []
+        if isinstance(value, str):
+            if value:
+                parts.append(genai_types.Part.from_text(text=value))
+        else:
+            for item in value:
+                if item.get("type") == "text" and item.get("text"):
+                    parts.append(genai_types.Part.from_text(text=item["text"]))
+                elif item.get("type") == "image_url":
+                    image_url = item.get("image_url", {}).get("url", "")
+                    match = re.fullmatch(r"data:(image/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/]+={0,2})", image_url)
+                    if match:
+                        image_bytes = base64.b64decode(match.group(2), validate=True)
+                        parts.append(genai_types.Part.from_bytes(data=image_bytes, mime_type=match.group(1)))
+        if parts:
+            contents.append(genai_types.Content(role=role, parts=parts))
+    return contents
+
+
+def generate_reply(messages, vision=False, provider="groq", selected_model=None):
+    if provider == "gemini":
+        if not gemini_client:
+            raise RuntimeError("Gemini is not configured. Set GEMINI_API_KEY on the server.")
+        model = selected_model or GEMINI_DEFAULT_MODEL
+        response = gemini_client.models.generate_content(
+            model=model,
+            contents=gemini_contents(messages),
+            config=genai_types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                max_output_tokens=MAX_OUTPUT_TOKENS,
+            ),
+        )
+        reply = (response.text or "").strip()
+        if not reply:
+            raise RuntimeError(f"Gemini model {model} returned an empty answer")
+        candidates = getattr(response, "candidates", None) or []
+        if candidates and "MAX_TOKENS" in str(getattr(candidates[0], "finish_reason", "")):
+            reply += "\n\n_(This answer reached the output limit and may be incomplete.)_"
+        return reply
+
+    primary = selected_model or (VISION_MODEL if vision else MODEL)
+    fallback = VISION_FALLBACK_MODEL if vision and primary == VISION_MODEL else TEXT_FALLBACK_MODEL if not vision and primary == MODEL else ""
     candidates = list(dict.fromkeys(model for model in (primary, fallback) if model))
     last_error = None
     for index, model in enumerate(candidates):
@@ -511,6 +606,39 @@ def me():
     if not user:
         return jsonify({"authenticated": False}), 401
     return jsonify({"authenticated": True, "user": user})
+
+
+@app.route("/api/models", methods=["GET"])
+@login_required
+def list_available_models():
+    models = available_models()
+    user = current_user()
+    provider, model = get_user_model_preference(user["id"])
+    available = {(item["provider"], item["id"]) for item in models}
+    saved_preference = (provider, model) in available
+    if (provider, model) not in available:
+        defaults = [("groq", MODEL), ("gemini", GEMINI_DEFAULT_MODEL)]
+        provider, model = next((choice for choice in defaults if choice in available), (None, None))
+    return jsonify({"models": models, "provider": provider, "model": model, "saved": saved_preference})
+
+
+@app.route("/api/model-preference", methods=["POST"])
+@login_required
+@rate_limit_user("model_preference", 30, 3600)
+def save_model_preference():
+    user = current_user()
+    data = request.get_json(silent=True) or {}
+    provider = data.get("provider")
+    model = data.get("model")
+    if not isinstance(provider, str) or provider not in {"groq", "gemini"} or not isinstance(model, str):
+        return jsonify({"error": "Choose a supported AI provider and model."}), 400
+    if (provider, model) not in {(item["provider"], item["id"]) for item in available_models()}:
+        return jsonify({"error": "That model is not available with the server's configured API keys."}), 400
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE users SET preferred_provider = :provider, preferred_model = :model WHERE id = :id"), {
+            "provider": provider, "model": model, "id": user["id"]
+        })
+    return jsonify({"provider": provider, "model": model})
 
 
 @app.route("/api/profile", methods=["PATCH"])
@@ -963,7 +1091,10 @@ def send_message(chat_id):
             message["role"] == "user" and isinstance(message["content"], list)
             for message in model_history
         )
-        reply = generate_reply(model_history, vision=needs_vision)
+        preferred_provider, preferred_model = get_user_model_preference(user["id"])
+        selected_provider = preferred_provider or "groq"
+        selected_model = preferred_model or (VISION_MODEL if needs_vision else MODEL)
+        reply = generate_reply(model_history, vision=needs_vision, provider=selected_provider, selected_model=selected_model)
         with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO messages (id, chat_id, role, content, created_at)

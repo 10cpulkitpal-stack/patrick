@@ -1,5 +1,6 @@
 flask
 groq
+google-genai
 python-dotenv
 gunicorn
 SQLAlchemy>=2.0,<3

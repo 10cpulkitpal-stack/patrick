@@ -4,6 +4,8 @@ const sendBtn = document.getElementById('sendBtn');
 const newChatBtn = document.getElementById('newChatBtn');
 const chatListEl = document.getElementById('chatList');
 const chatTitleEl = document.getElementById('chatTitle');
+const modelSelector = document.getElementById('modelSelector');
+const modelStatus = document.getElementById('modelStatus');
 const micBtn = document.getElementById('micBtn');
 const voiceOutputBtn = document.getElementById('voiceOutputBtn');
 const voiceOffIcon = document.getElementById('voiceOffIcon');
@@ -36,6 +38,7 @@ let pendingAttachment = null; // { kind: 'image'|'text'|'unsupported', name, dat
 
 let currentChatId = null;
 let voiceOutputEnabled = false;
+let selectedModelKey = '';
 
 // ---------- rendering helpers ----------
 
@@ -689,6 +692,76 @@ function resizeComposer() {
 }
 newChatBtn.addEventListener('click', createNewChat);
 
+async function loadModelOptions() {
+  modelStatus.textContent = '';
+  try {
+    const res = await fetch('/api/models');
+    const data = await res.json();
+    if (!res.ok || !Array.isArray(data.models) || data.models.length === 0) {
+      throw new Error(data.error || 'No models are available. Check the server API keys.');
+    }
+    modelSelector.innerHTML = '';
+    for (const provider of ['groq', 'gemini']) {
+      const providerModels = data.models.filter(model => model.provider === provider);
+      if (!providerModels.length) continue;
+      const group = document.createElement('optgroup');
+      group.label = provider === 'groq' ? 'Groq models' : 'Gemini models';
+      for (const model of providerModels) {
+        const option = document.createElement('option');
+        option.value = `${model.provider}|${model.id}`;
+        option.textContent = model.id;
+        group.appendChild(option);
+      }
+      modelSelector.appendChild(group);
+    }
+    selectedModelKey = data.provider && data.model ? `${data.provider}|${data.model}` : modelSelector.options[0].value;
+    modelSelector.value = selectedModelKey;
+    if (!data.saved && data.provider && data.model) {
+      const separator = selectedModelKey.indexOf('|');
+      const saved = await fetch('/api/model-preference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: selectedModelKey.slice(0, separator), model: selectedModelKey.slice(separator + 1) })
+      });
+      if (!saved.ok) throw new Error('Could not save the default model preference.');
+    }
+    modelSelector.disabled = false;
+  } catch (error) {
+    modelSelector.innerHTML = '';
+    const option = document.createElement('option');
+    option.textContent = 'Models unavailable';
+    modelSelector.appendChild(option);
+    modelSelector.disabled = true;
+    modelStatus.textContent = error.message;
+  }
+}
+
+modelSelector.addEventListener('change', async () => {
+  const nextKey = modelSelector.value;
+  const separator = nextKey.indexOf('|');
+  if (separator < 0) return;
+  const provider = nextKey.slice(0, separator);
+  const model = nextKey.slice(separator + 1);
+  modelSelector.disabled = true;
+  modelStatus.textContent = 'Saving model preference…';
+  try {
+    const res = await fetch('/api/model-preference', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, model })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save the selected model.');
+    selectedModelKey = `${data.provider}|${data.model}`;
+    modelStatus.textContent = 'Model saved';
+  } catch (error) {
+    modelSelector.value = selectedModelKey;
+    modelStatus.textContent = error.message;
+  } finally {
+    modelSelector.disabled = false;
+  }
+});
+
 // ---------- account profile ----------
 
 accountButton.addEventListener('click', () => {
@@ -777,6 +850,7 @@ logoutButton.addEventListener('click', async () => {
 // ---------- init ----------
 
 async function init() {
+  await loadModelOptions();
   const res = await fetch('/api/chats');
   if (res.status === 401) {
     window.location.href = '/signin';

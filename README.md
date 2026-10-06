@@ -34,6 +34,7 @@ https://patrick-c89f.onrender.com/
 | Python | Backend programming |
 | Flask | Web server and REST API |
 | Groq API | AI model inference |
+| Gemini API | Optional Google AI model inference |
 | HTML5 | Application structure |
 | CSS3 | UI and responsive styling |
 | JavaScript | Frontend interaction |
@@ -141,6 +142,8 @@ Open the address in your browser.
 | `GROQ_VISION_MODEL` | No | Primary image-capable model; defaults to `qwen/qwen3.8-27b`. |
 | `GROQ_VISION_FALLBACK_MODEL` | No | Optional image-capable fallback model. |
 | `GROQ_MAX_OUTPUT_TOKENS` | No | Output-token budget; defaults to `4096` and is limited to 1,024–16,384. |
+| `GEMINI_API_KEY` | Optional | Google AI Studio API key. Enables the Gemini models in the in-app model picker. |
+| `GEMINI_DEFAULT_MODEL` | No | Gemini model selected for new accounts when available; defaults to `gemini-3.8-flash`. |
 | `SECRET_KEY` | Yes in production | Flask session signing key. Set a long, random value before deployment. |
 | `GOOGLE_CLIENT_ID` | Optional | OAuth client ID from Google Cloud Console. Enables Google sign-in when paired with the secret. |
 | `GOOGLE_CLIENT_SECRET` | Optional | OAuth client secret. Keep it private and store it as a Render environment variable in production. |
@@ -173,7 +176,9 @@ FLASK_DEBUG=true
 
 ## 🤖 AI Models
 
-The models are configured through environment variables:
+Users can choose a model from the selector in the chat header. It lists active Groq chat models available to `GROQ_API_KEY` and Gemini models available to `GEMINI_API_KEY`; each user's choice is saved to their account. The Gemini list comes from Google's Models API and only includes models that support `generateContent`.
+
+The default Groq models are configured through environment variables:
 
 ### Text model
 
@@ -192,7 +197,9 @@ GROQ_VISION_MODEL=qwen/qwen3.8-27b
 
 This model is used when a recent message includes an image. Image attachments and text-file contents are retained for subsequent follow-up questions. The previous `qwen/qwen3.6-27b` default was retired by Groq in September 2026; `qwen/qwen3.8-27b` is its listed replacement.
 
-If Groq changes model availability, set these environment variables to model IDs enabled for your Groq account. The app bounds prompt history to the latest 16 messages and 32,000 characters, and falls back for empty or unavailable model responses.
+If Groq changes model availability, set these environment variables to model IDs enabled for your Groq account. The app bounds prompt history to the latest 16 messages and 32,000 characters, and falls back for empty or unavailable default Groq model responses.
+
+To enable Gemini in production, create an API key in Google AI Studio and add it to Render as `GEMINI_API_KEY`. All users share the API credentials configured by the site owner, so availability, quotas, and billing follow those provider accounts. Users can only select models exposed by the configured keys.
 
 ## 🔄 How It Works
 
