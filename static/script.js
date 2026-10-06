@@ -276,6 +276,7 @@ function updateVoiceOutputIcon() {
   voiceOnIcon.classList.toggle('is-hidden', !voiceOutputEnabled);
   voiceOutputBtn.classList.toggle('active', voiceOutputEnabled);
   voiceOutputBtn.title = voiceOutputEnabled ? 'Voice replies: ON (click to mute)' : 'Voice replies: OFF (click to enable)';
+  voiceOutputBtn.setAttribute('aria-pressed', String(voiceOutputEnabled));
 }
 
 voiceOutputBtn.addEventListener('click', () => {
@@ -295,12 +296,16 @@ if (!window.speechSynthesis) {
 
 // ---------- chat list ----------
 
-function closeAllMenus() {
+function closeAllMenus(restoreButton = null) {
   document.querySelectorAll('.chat-menu').forEach(m => m.remove());
-  document.querySelectorAll('.kebab-btn.menu-open').forEach(b => b.classList.remove('menu-open'));
+  document.querySelectorAll('.kebab-btn.menu-open').forEach(b => {
+    b.classList.remove('menu-open');
+    b.setAttribute('aria-expanded', 'false');
+  });
+  if (restoreButton) restoreButton.focus();
 }
 
-document.addEventListener('click', closeAllMenus);
+document.addEventListener('click', () => closeAllMenus());
 
 async function loadChatList(selectId) {
   const res = await fetch('/api/chats');
@@ -321,10 +326,22 @@ async function loadChatList(selectId) {
     const item = document.createElement('div');
     item.className = 'chat-list-item' + (chat.id === selectId ? ' active' : '');
     item.dataset.id = chat.id;
+    item.setAttribute('role', 'group');
+    item.setAttribute('aria-label', `Chat actions and title: ${chat.title}`);
 
     const titleSpan = document.createElement('span');
     titleSpan.className = 'title';
     titleSpan.textContent = chat.title;
+    titleSpan.tabIndex = 0;
+    titleSpan.setAttribute('role', 'button');
+    titleSpan.setAttribute('aria-label', `Open chat: ${chat.title}`);
+    titleSpan.addEventListener('click', () => openChat(chat.id));
+    titleSpan.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openChat(chat.id);
+      }
+    });
     item.appendChild(titleSpan);
 
     const menuWrapper = document.createElement('div');
@@ -334,6 +351,9 @@ async function loadChatList(selectId) {
     kebabBtn.className = 'kebab-btn';
     kebabBtn.textContent = '⋮';
     kebabBtn.title = 'Chat options';
+    kebabBtn.setAttribute('aria-label', `Actions for ${chat.title}`);
+    kebabBtn.setAttribute('aria-haspopup', 'menu');
+    kebabBtn.setAttribute('aria-expanded', 'false');
 
     kebabBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -342,10 +362,14 @@ async function loadChatList(selectId) {
       if (alreadyOpen) return;
 
       kebabBtn.classList.add('menu-open');
+      kebabBtn.setAttribute('aria-expanded', 'true');
       const menu = document.createElement('div');
       menu.className = 'chat-menu';
+      menu.setAttribute('role', 'menu');
+      menu.setAttribute('aria-label', `Actions for ${chat.title}`);
 
       const renameBtn = document.createElement('button');
+      renameBtn.setAttribute('role', 'menuitem');
       renameBtn.textContent = '✏️ Rename';
       renameBtn.addEventListener('click', (ev) => {
         ev.stopPropagation();
@@ -355,6 +379,7 @@ async function loadChatList(selectId) {
 
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'menu-delete';
+      deleteBtn.setAttribute('role', 'menuitem');
       deleteBtn.textContent = '🗑️ Delete';
       deleteBtn.addEventListener('click', (ev) => {
         ev.stopPropagation();
@@ -365,12 +390,26 @@ async function loadChatList(selectId) {
       menu.appendChild(renameBtn);
       menu.appendChild(deleteBtn);
       menuWrapper.appendChild(menu);
+      menu.addEventListener('keydown', (event) => {
+        const actions = [...menu.querySelectorAll('button')];
+        const index = actions.indexOf(document.activeElement);
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeAllMenus(kebabBtn);
+        } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          const direction = event.key === 'ArrowDown' ? 1 : -1;
+          actions[(index + direction + actions.length) % actions.length].focus();
+        } else if (event.key === 'Home' || event.key === 'End') {
+          event.preventDefault();
+          actions[event.key === 'Home' ? 0 : actions.length - 1].focus();
+        }
+      });
+      renameBtn.focus();
     });
 
     menuWrapper.appendChild(kebabBtn);
     item.appendChild(menuWrapper);
-    item.addEventListener('click', () => openChat(chat.id));
-
     chatListEl.appendChild(item);
   });
 }

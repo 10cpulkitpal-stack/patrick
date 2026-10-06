@@ -1,6 +1,6 @@
 # Patrick — AI Chat Bot
 
-Patrick is a modern, ChatGPT-style AI chatbot built with **Python Flask**, **JavaScript**, **HTML/CSS**, and the **Groq API**.
+Patrick is a ChatGPT-style chatbot built with **Flask**, **SQLAlchemy**, **JavaScript**, and the **Groq and Gemini APIs**.
 
 It provides persistent chat conversations, image understanding, voice input/output, light/dark themes, chat management, and a responsive interface for desktop and mobile browsers.
 
@@ -13,7 +13,7 @@ https://patrick-c89f.onrender.com/
 
 ## ✨ Features
 
-- 💬 **AI chat** powered by Groq
+- 💬 **AI chat** powered by Groq or Gemini; users choose from enabled models
 - 🧠 **Conversation history** stored in SQLite by default, with PostgreSQL support
 - 🖼️ **Image understanding** using a vision-capable model
 - 📎 **Image/file attachment UI**
@@ -47,11 +47,18 @@ https://patrick-c89f.onrender.com/
 ```text
 patrick-chatbot/
 │
-├── app.py
+├── app.py                 # Flask app and HTTP routes
+├── ai.py                  # User-aware system prompt construction
+├── auth.py                # Email verification and mail delivery service
+├── chats.py               # ORM-backed chat persistence and history
+├── models.py              # SQLAlchemy ORM schema
+├── alembic.ini
+├── migrations/            # Alembic database migrations
+├── tests/                 # Automated unit tests
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
-├── patrick.db (created automatically for local SQLite use)
+├── patrick.db (local SQLite database; created by migrations)
 │
 ├── templates/
 │   └── index.html
@@ -118,19 +125,27 @@ You can use `.env.example` as a template.
 
 **Never commit your `.env` file or expose your API key publicly.**
 
-### 5. Run the application
+### 5. Create or upgrade the database
+
+Run migrations before starting the web server. They create a new database or upgrade an existing Patrick database while retaining its data:
 
 ```bash
-python app.py
+alembic upgrade head
 ```
 
-The Flask server will normally start at:
+### 6. Run locally
+
+```bash
+gunicorn --bind 127.0.0.1:5000 app:app
+```
+
+The server will normally start at:
 
 ```text
 http://127.0.0.1:5000
 ```
 
-Open the address in your browser.
+Open the address in your browser. For local debugging, set `FLASK_DEBUG=true` and run `python app.py`; the debug server binds only to `127.0.0.1`.
 
 ## 🔑 Environment Variables
 
@@ -230,6 +245,26 @@ Conversation saved to the configured SQL database
 
 ## 🔌 API Endpoints
 
+### Authentication and profile
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/signin`, `/signup` | Render sign-in and sign-up pages |
+| `POST` | `/api/auth/register` | Register with email/password; sends a verification email |
+| `POST` | `/api/auth/login` | Sign in with a verified email/password account |
+| `GET`, `POST` | `/verify-email` | Verify an email/password account |
+| `GET` | `/auth/google` | Begin Google OAuth sign-in |
+| `GET` | `/auth/google/callback` | Complete Google OAuth sign-in |
+| `POST` | `/api/auth/logout` | Sign out |
+| `GET` | `/api/me` | Get the current account |
+| `PATCH` | `/api/profile` | Update profile name |
+| `POST` | `/api/profile/password` | Set or change the account password |
+| `GET` | `/api/models` | List models available to configured provider keys |
+| `POST` | `/api/model-preference` | Save the user's provider/model choice |
+| `GET` | `/healthz` | Health check; returns 503 if the database cannot be reached |
+
+Chat endpoints require a signed-in session. Mutating requests must be same-origin.
+
 ### Get all chats
 
 ```http
@@ -318,13 +353,13 @@ The frontend is designed around a ChatGPT-inspired interface and includes:
 
 ## 💾 Data Storage
 
-Patrick uses SQLAlchemy for conversation storage. Local development uses SQLite:
+Patrick uses SQLAlchemy ORM models with Alembic-managed schema migrations. Local development uses SQLite:
 
 ```text
 patrick.db
 ```
 
-Set `DATABASE_URL` to a PostgreSQL connection string for a hosted deployment. The app creates its tables automatically on startup.
+Set `DATABASE_URL` to a PostgreSQL connection string for a hosted deployment. Run `alembic upgrade head` as a deployment pre-start step, before Gunicorn launches workers. On Render, set the service's **Pre-Deploy Command** to `alembic upgrade head` when available; otherwise use a Start Command of `alembic upgrade head && gunicorn app:app`. Do not create schema at Python import time.
 
 ## 🔒 Security Notes
 
@@ -353,9 +388,13 @@ Run the application with:
 python app.py
 ```
 
-The project is configured to use Flask's development server.
+The production server is Gunicorn (`gunicorn app:app`). Set the Render health-check path to `/healthz`. Run migrations before deploying code that requires a new schema revision.
 
-For production deployment, use a production WSGI server such as Gunicorn or another appropriate deployment platform.
+Run the automated tests with:
+
+```bash
+pytest
+```
 
 ## 📌 Future Improvements
 
@@ -375,7 +414,8 @@ Possible improvements include:
 - [x] Per-IP/per-user rate limits and daily message cap
 - [x] Same-origin checks, CSP/security headers, and SRI-pinned CDN scripts
 - [x] Password length limits and loopback-only local debug server
-- [ ] Automated tests
+- [x] Automated tests for prompt behavior and ORM indexes
+- [x] Alembic schema migrations, query indexes, logging, and health check
 
 ## 👨‍💻 Author
 
