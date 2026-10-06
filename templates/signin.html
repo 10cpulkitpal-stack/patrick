@@ -26,26 +26,12 @@
     <label for="email">Email</label>
     <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
     <label for="password">Password</label>
-    <input id="password" type="password" autocomplete="current-password" placeholder="Your password" required>
+    <input id="password" type="password" autocomplete="current-password" placeholder="Your password" maxlength="128" required>
     <button type="submit">Sign in</button>
     <div id="error" class="auth-error"></div>
   </form>
   <p class="auth-switch">New to Patrick? <a href="/signup">Create an account</a></p>
 </main>
-<script>
-const form=document.getElementById('authForm');
-const error=document.getElementById('error');
-form.addEventListener('submit',async(e)=>{
- e.preventDefault(); error.textContent='';
- const button=form.querySelector('button'); button.disabled=true; button.textContent='Signing in...';
- try {
-   const res=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value,password:document.getElementById('password').value})});
-   const data=await res.json();
-   if(!res.ok){error.textContent=data.error||'Unable to sign in.';return;}
-   window.location.href='/';
- } catch(err){error.textContent='Network error. Please try again.';}
- finally {button.disabled=false;button.textContent='Sign in';}
-});
-</script>
+<script src="{{ url_for('static', filename='signin.js') }}" defer></script>
 </body>
 </html>

@@ -28,26 +28,12 @@
     <label for="email">Email</label>
     <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
     <label for="password">Password</label>
-    <input id="password" type="password" autocomplete="new-password" placeholder="At least 8 characters" minlength="8" required>
+    <input id="password" type="password" autocomplete="new-password" placeholder="At least 8 characters" minlength="8" maxlength="128" required>
     <button type="submit">Create account</button>
     <div id="error" class="auth-error"></div>
   </form>
   <p class="auth-switch">Already have an account? <a href="/signin">Sign in</a></p>
 </main>
-<script>
-const form=document.getElementById('authForm');
-const error=document.getElementById('error');
-form.addEventListener('submit',async(e)=>{
- e.preventDefault(); error.textContent='';
- const button=form.querySelector('button'); button.disabled=true; button.textContent='Creating...';
- try {
-   const res=await fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:document.getElementById('name').value,email:document.getElementById('email').value,password:document.getElementById('password').value})});
-   const data=await res.json();
-   if(!res.ok){error.textContent=data.error||'Unable to create account.';return;}
-   window.location.href='/';
- } catch(err){error.textContent='Network error. Please try again.';}
- finally {button.disabled=false;button.textContent='Create account';}
-});
-</script>
+<script src="{{ url_for('static', filename='signup.js') }}" defer></script>
 </body>
 </html>

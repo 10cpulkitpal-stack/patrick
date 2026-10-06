@@ -34,6 +34,7 @@ body.light-theme {
 }
 
 * { box-sizing: border-box; }
+.is-hidden { display: none !important; }
 
 html, body {
   height: 100%;
@@ -813,6 +814,7 @@ body.light-theme .chat-menu {
 }
 
 @media (max-width: 768px) {
+  #sidebarOpen:not(.is-hidden) { display: flex; }
   .sidebar {
     position: fixed;
     z-index: 20;
@@ -990,6 +992,7 @@ body.light-theme .chat-menu {
 .auth-page-card form > button:hover { background: #0d8f70; }
 .auth-page-card form > button:disabled { opacity: .65; cursor: wait; }
 .auth-error { min-height: 20px; margin-top: 10px; color: #ff8d8d; font-size: 13px; text-align: center; }
+.auth-error.auth-success { color: #48c78e; }
 .auth-switch { margin: 22px 0 0; color: var(--text-secondary); font-size: 13px; }
 .auth-switch a { color: #10a37f; text-decoration: none; font-weight: 600; }
 .auth-switch a:hover { text-decoration: underline; }

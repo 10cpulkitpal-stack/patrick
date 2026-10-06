@@ -124,7 +124,7 @@ const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
 
 function setSidebarOpen(open) {
   sidebar.classList.toggle('collapsed', !open);
-  sidebarOpen.style.display = open || !isMobile() ? 'none' : 'flex';
+  sidebarOpen.classList.toggle('is-hidden', open || !isMobile());
   sidebarBackdrop.classList.toggle('visible', open && isMobile());
 }
 
@@ -155,8 +155,8 @@ window.addEventListener('resize', () => {
 
 function applyTheme(theme) {
   document.body.classList.toggle('light-theme', theme === 'light');
-  themeIconMoon.style.display = theme === 'light' ? 'block' : 'none';
-  themeIconSun.style.display = theme === 'light' ? 'none' : 'block';
+  themeIconMoon.classList.toggle('is-hidden', theme === 'light');
+  themeIconSun.classList.toggle('is-hidden', theme !== 'light');
   localStorage.setItem('theme', theme);
 }
 
@@ -249,8 +249,8 @@ function speak(text) {
 }
 
 function updateVoiceOutputIcon() {
-  voiceOffIcon.style.display = voiceOutputEnabled ? 'none' : 'block';
-  voiceOnIcon.style.display = voiceOutputEnabled ? 'block' : 'none';
+  voiceOffIcon.classList.toggle('is-hidden', voiceOutputEnabled);
+  voiceOnIcon.classList.toggle('is-hidden', !voiceOutputEnabled);
   voiceOutputBtn.classList.toggle('active', voiceOutputEnabled);
   voiceOutputBtn.title = voiceOutputEnabled ? 'Voice replies: ON (click to mute)' : 'Voice replies: OFF (click to enable)';
 }
@@ -465,10 +465,10 @@ const MAX_TEXT_CHARS = 6000;                  // truncate long text files
 
 function showAttachmentPreview() {
   if (!pendingAttachment) {
-    attachmentPreview.style.display = 'none';
+    attachmentPreview.classList.add('is-hidden');
     return;
   }
-  attachmentPreview.style.display = 'block';
+  attachmentPreview.classList.remove('is-hidden');
   attachmentName.textContent = pendingAttachment.name;
 
   if (pendingAttachment.kind === 'image') {

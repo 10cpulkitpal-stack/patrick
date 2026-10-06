@@ -105,6 +105,12 @@ SECRET_KEY=replace-with-a-long-random-secret
 GOOGLE_CLIENT_ID=your-google-oauth-client-id
 GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
 GOOGLE_REDIRECT_URI=http://127.0.0.1:5000/auth/google/callback
+MAIL_SERVER=smtp.gmail.com
+MAIL_PORT=587
+MAIL_USERNAME=your-email@gmail.com
+MAIL_PASSWORD=your-email-app-password
+MAIL_FROM="Patrick <your-email@gmail.com>"
+PUBLIC_BASE_URL=http://127.0.0.1:5000
 ```
 
 You can use `.env.example` as a template.
@@ -134,9 +140,14 @@ Open the address in your browser.
 | `GOOGLE_CLIENT_ID` | Optional | OAuth client ID from Google Cloud Console. Enables Google sign-in when paired with the secret. |
 | `GOOGLE_CLIENT_SECRET` | Optional | OAuth client secret. Keep it private and store it as a Render environment variable in production. |
 | `GOOGLE_REDIRECT_URI` | Optional | OAuth callback URL. Defaults to the current host's `/auth/google/callback`. |
+| `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM` | Required for email/password signup | SMTP settings used to send account verification links. Keep the password private. Gmail users should use an app password. |
+| `PUBLIC_BASE_URL` | Recommended | Public base URL used in verification emails (for example, `https://patrick-c89f.onrender.com`). |
+| `DAILY_MESSAGE_LIMIT` | No | Maximum user messages per account per UTC day. Defaults to `100`; each account is also limited to 20 messages per hour and each IP to 60 per hour. |
 | `DATABASE_URL` | No | Database connection URL. Defaults to `sqlite:///patrick.db`. |
 | `PORT` | No | Port for the Flask application. Defaults to `5000` |
-| `FLASK_DEBUG` | No | Enables Flask debug mode; defaults to `false` |
+| `FLASK_DEBUG` | No | Enables Flask debug mode only for local development; defaults to `false` and is ignored in production. |
+
+When deploying to Render, add the mail settings and `PUBLIC_BASE_URL` as service environment variables. Until SMTP is configured, email/password signup and verification for existing password accounts are unavailable; Google sign-in continues to work.
 
 ### Set up Google sign-in
 
@@ -145,7 +156,7 @@ Open the address in your browser.
 3. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in your local `.env` file.
 4. For Render, add the production callback URL `https://YOUR-APP.onrender.com/auth/google/callback` to the OAuth client's authorized redirect URIs. Set the same URL as `GOOGLE_REDIRECT_URI` and add both Google credentials in Render's environment settings.
 
-Google sign-in requires a verified Google email. If that email already has a Patrick account, signing in with Google opens that account; otherwise, Patrick creates one. Email/password sign-in remains available without Google credentials.
+Google sign-in requires a verified Google email. If that email already has a Patrick account, signing in with Google opens that account; otherwise, Patrick creates one. Email/password sign-in remains available without Google credentials, but new email/password accounts must verify their email first. Configure the SMTP settings above before enabling email/password registration in production.
 
 Example:
 
@@ -310,7 +321,7 @@ Before deploying Patrick publicly:
 2. Never commit `.env`.
 3. Do not expose private conversation data.
 4. Set a strong `SECRET_KEY` (required when `FLASK_ENV=production` or running on Render).
-5. Add request rate limiting and CSRF protection.
+5. Keep SMTP verification, persisted IP/user rate limits, and same-origin request checks enabled.
 6. Use HTTPS in production.
 7. Disable Flask debug mode in production.
 
@@ -318,6 +329,7 @@ For production:
 
 ```env
 FLASK_DEBUG=false
+PUBLIC_BASE_URL=https://patrick-c89f.onrender.com
 ```
 
 ## 🧪 Development
@@ -346,7 +358,10 @@ Possible improvements include:
 - [ ] Admin dashboard
 - [ ] Production deployment
 - [ ] Better error handling and API validation
-- [ ] Request rate limiting and CSRF protection
+- [x] Email verification for password accounts
+- [x] Per-IP/per-user rate limits and daily message cap
+- [x] Same-origin checks, CSP/security headers, and SRI-pinned CDN scripts
+- [x] Password length limits and loopback-only local debug server
 - [ ] Automated tests
 
 ## 👨‍💻 Author
