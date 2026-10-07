@@ -75,10 +75,13 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2px sol
   --text: #f2f2ef;
   --text-soft: #b2b2ad;
   --text-muted: #74746f;
-  position: relative;
+  position: fixed;
+  inset: 0;
   display: flex;
   width: 100%;
-  min-height: 100svh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   overflow: hidden;
   background: var(--page-bg);
   color: var(--text);
@@ -106,7 +109,8 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2px sol
   flex: 0 0 266px;
   flex-direction: column;
   width: 266px;
-  min-height: 100svh;
+  height: 100%;
+  min-height: 0;
   padding: 24px 16px 17px;
   border-right: 1px solid var(--line);
   background: var(--sidebar-bg);
@@ -146,7 +150,7 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2px sol
 .status-dot { display: inline-block; width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: #8d9b8b; box-shadow: 0 0 10px rgb(141 155 139 / 25%); }
 .sidebar-footer-copy { margin: 8px 0 0 14px; color: var(--text-muted); font-size: 10px; }
 
-.workspace { position: relative; display: flex; flex: 1; min-width: 0; min-height: 100svh; flex-direction: column; }
+.workspace { position: relative; display: flex; flex: 1; min-width: 0; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; }
 .topbar { position: relative; z-index: 1; min-height: 76px; justify-content: space-between; gap: 16px; padding: 0 31px; border-bottom: 1px solid var(--line); }
 .topbar-leading { min-width: 0; gap: 11px; }
 .conversation-heading { min-width: 0; }
@@ -165,7 +169,7 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2px sol
 .model-divider { width: 1px; height: 13px; background: var(--line); }
 .model-unavailable { color: var(--text-muted); }
 
-.conversation-stage { display: flex; flex: 1; align-items: center; justify-content: center; overflow-y: auto; padding: 25px 28px 240px; }
+.conversation-stage { display: flex; flex: 1; min-height: 0; align-items: center; justify-content: center; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 25px 28px 240px; }
 .welcome-content { width: min(100%, 710px); margin: auto; animation: welcome-in 520ms cubic-bezier(.2,.75,.25,1) both; }
 .welcome-eyebrow { display: flex; align-items: center; justify-content: center; gap: 11px; color: var(--text-muted); font-size: 9px; font-weight: 570; letter-spacing: .15em; text-align: center; }
 .eyebrow-line { width: 24px; height: 1px; background: var(--line-strong); }
@@ -249,12 +253,12 @@ button:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2px sol
   .conversation-stage { padding-right: 22px; padding-left: 22px; }
 }
 @media (max-width: 700px) {
-  .sidebar { position: fixed; top: 0; bottom: 0; left: 0; width: min(290px, calc(100vw - 52px)); min-height: 100dvh; transform: translateX(-102%); }
+  .sidebar { position: fixed; top: 0; bottom: 0; left: 0; width: min(290px, calc(100vw - 52px)); height: 100dvh; min-height: 0; transform: translateX(-102%); }
   .sidebar.sidebar-open { transform: translateX(0); }
   .sidebar-close, .mobile-menu { display: grid; }
   .sidebar-topline { padding-bottom: 27px; }
   .sidebar-scrim { position: fixed; z-index: 3; inset: 0; display: block; border: 0; background: rgb(0 0 0 / 58%); backdrop-filter: blur(2px); }
-  .workspace { min-height: 100dvh; }
+  .workspace { height: 100dvh; min-height: 0; }
   .topbar { min-height: 65px; gap: 8px; padding: 0 13px; }
   .topbar-leading { gap: 6px; }
   .mobile-menu { width: 32px; height: 32px; }
