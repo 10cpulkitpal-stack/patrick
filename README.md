@@ -1,6 +1,6 @@
 # Patrick — AI Chat Bot
 
-Patrick is a ChatGPT-style chatbot built with **Flask**, **SQLAlchemy**, **JavaScript**, and the **Groq and Gemini APIs**.
+Patrick is a ChatGPT-style chatbot built with **Flask**, **Next.js**, **SQLAlchemy**, and the **Groq and Gemini APIs**.
 
 It provides persistent chat conversations, image understanding, voice input/output, light/dark themes, chat management, and a responsive interface for desktop and mobile browsers.
 
@@ -35,9 +35,9 @@ https://patrick-c89f.onrender.com/
 | Flask | Web server and REST API |
 | Groq API | AI model inference |
 | Gemini API | Optional Google AI model inference |
-| HTML5 | Application structure |
-| CSS3 | UI and responsive styling |
-| JavaScript | Frontend interaction |
+| Next.js and React | Frontend pages and interaction |
+| TypeScript | Frontend application logic |
+| CSS | UI and responsive styling |
 | SQLAlchemy | SQLite or PostgreSQL conversation storage |
 | python-dotenv | Environment variable management |
 | Highlight.js | Code syntax highlighting |
@@ -56,8 +56,11 @@ patrick-chatbot/
 │   ├── models.py           # SQLAlchemy ORM schema
 │   └── migrations/         # Alembic database migrations
 ├── frontend/
-│   ├── templates/          # Flask-rendered pages
-│   └── static/             # CSS, JavaScript, and browser assets
+│   ├── app/                # Next.js app, auth pages, and styles
+│   ├── components/         # Patrick chat workspace and UI
+│   ├── public/             # Browser assets
+│   └── out/                # Generated static site served by Flask (not committed)
+├── render-build.sh         # Builds frontend and installs Python requirements on Render
 ├── alembic.ini
 ├── tests/                 # Automated unit tests
 ├── requirements.txt
@@ -99,6 +102,15 @@ source venv/bin/activate
 
 ```bash
 pip install -r requirements.txt
+```
+
+Install Node.js 22 and pnpm 12, then build the static frontend:
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm build
+cd ..
 ```
 
 ### 4. Configure the Groq API key
@@ -168,7 +180,7 @@ Open the address in your browser. Run commands from the repository root. For loc
 | `PORT` | No | Port for the Flask application. Defaults to `5000` |
 | `FLASK_DEBUG` | No | Enables Flask debug mode only for local development; defaults to `false` and is ignored in production. |
 
-When deploying to Render, add the mail settings and `PUBLIC_BASE_URL` as service environment variables. Until SMTP is configured, email/password signup and verification for existing password accounts are unavailable; Google sign-in continues to work.
+When deploying to the existing Render Python web service, set its **Build Command** to `bash render-build.sh` and keep its **Start Command** as `alembic upgrade head && gunicorn backend.app:app`. The build command creates `frontend/out`, which Flask serves from the same origin as the API and login session. Keep the service's health-check path set to `/healthz`. Add the mail settings and `PUBLIC_BASE_URL` as service environment variables. Until SMTP is configured, email/password signup and verification for existing password accounts are unavailable; Google sign-in continues to work.
 
 ### Set up Google sign-in
 
@@ -247,7 +259,7 @@ Conversation saved to the configured SQL database
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `GET` | `/signin`, `/signup` | Render sign-in and sign-up pages |
+| `GET` | `/signin`, `/signup` | Static Next.js sign-in and sign-up pages |
 | `POST` | `/api/auth/register` | Register with email/password; sends a verification email |
 | `POST` | `/api/auth/login` | Sign in with a verified email/password account |
 | `GET`, `POST` | `/verify-email` | Verify an email/password account |

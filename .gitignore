@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 patrick.db
 *.db
+frontend/node_modules/
+frontend/.next/
+frontend/out/

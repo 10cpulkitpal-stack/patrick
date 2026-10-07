@@ -11,7 +11,7 @@ import logging
 from functools import wraps
 from urllib.parse import urlsplit
 
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash
+from flask import Flask, request, jsonify, session, redirect, url_for, send_from_directory
 from authlib.integrations.flask_client import OAuth
 from groq import Groq
 from dotenv import load_dotenv
@@ -43,11 +43,8 @@ if is_production and not secret_key:
     raise RuntimeError("Set a strong SECRET_KEY before running in production.")
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-app = Flask(
-    __name__,
-    template_folder=os.path.join(PROJECT_ROOT, "frontend", "templates"),
-    static_folder=os.path.join(PROJECT_ROOT, "frontend", "static"),
-)
+FRONTEND_BUILD_DIR = os.path.join(PROJECT_ROOT, "frontend", "out")
+app = Flask(__name__, static_folder=None)
 app.config.update(
     SECRET_KEY=secret_key or "dev-only-change-me",
     MAX_CONTENT_LENGTH=11 * 1024 * 1024,
@@ -299,14 +296,41 @@ def protect_state_changing_requests():
     return None
 
 
+_frontend_script_hash_sources = None
+
+
+def frontend_script_hash_sources():
+    """Allow only the inline bootstrap scripts emitted by this static Next build."""
+    global _frontend_script_hash_sources
+    if _frontend_script_hash_sources is None:
+        hashes = set()
+        if os.path.isdir(FRONTEND_BUILD_DIR):
+            for root, _directories, filenames in os.walk(FRONTEND_BUILD_DIR):
+                for filename in filenames:
+                    if not filename.endswith(".html"):
+                        continue
+                    try:
+                        with open(os.path.join(root, filename), "rb") as html_file:
+                            document = html_file.read()
+                    except OSError:
+                        continue
+                    for script in re.findall(rb"<script(?:\s[^>]*)?>(.*?)</script\s*>", document, re.DOTALL | re.IGNORECASE):
+                        if script.strip():
+                            digest = base64.b64encode(hashlib.sha256(script).digest()).decode("ascii")
+                            hashes.add(f"'sha256-{digest}'")
+        _frontend_script_hash_sources = " ".join(sorted(hashes))
+    return _frontend_script_hash_sources
+
+
 @app.after_request
 def add_security_headers(response):
+    inline_script_hashes = frontend_script_hash_sources()
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; "
-        "script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
-        "style-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com; style-src-attr 'none'; "
-        "font-src 'self' https://fonts.gstatic.com data:; "
+        f"script-src 'self' {inline_script_hashes}; "
+        "style-src 'self'; style-src-attr 'none'; "
+        "font-src 'self' data:; "
         "img-src 'self' data: blob:; connect-src 'self'; "
         "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
     )
@@ -462,25 +486,27 @@ def verify_email():
             row = db.scalar(select(EmailVerificationToken).where(
                 EmailVerificationToken.token_hash == token_hash, EmailVerificationToken.expires_at > time.time()))
         if not row:
-            flash("That verification link is invalid or expired. Sign in with your password to request a fresh link.", "error")
-            return redirect(url_for("signup"))
-        return render_template("verify_email.html", token=token)
+            return redirect(url_for("signup", error="verification_expired"))
+        return send_from_directory(FRONTEND_BUILD_DIR, "verify-email.html")
 
-    token = request.form.get("token", "")
+    data = request.get_json(silent=True) or {}
+    token = data.get("token", "") if request.is_json else request.form.get("token", "")
     token_hash = hashlib.sha256(token.encode()).hexdigest() if token else ""
     with SessionLocal.begin() as db:
         row = db.scalar(select(EmailVerificationToken).where(
             EmailVerificationToken.token_hash == token_hash, EmailVerificationToken.expires_at > time.time()))
         if not row:
-            flash("That verification link is invalid or expired. Sign in with your password to request a fresh link.", "error")
-            return redirect(url_for("signup"))
+            if request.is_json:
+                return jsonify({"error": "This verification link is invalid or expired."}), 400
+            return redirect(url_for("signup", error="verification_expired"))
         account = db.get(User, row.user_id)
         account.email_verified = True
         db.delete(row)
         for old_token in db.scalars(select(EmailVerificationToken).where(EmailVerificationToken.user_id == account.id)):
             db.delete(old_token)
-    flash("Email verified. You can now sign in.", "success")
-    return redirect(url_for("signin"))
+    if request.is_json:
+        return jsonify({"verified": True})
+    return redirect(url_for("signin", verified="1"))
 
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -519,8 +545,7 @@ def login():
 @app.route("/auth/google")
 def google_login():
     if not google_oauth_enabled:
-        flash("Google sign-in is not configured yet. You can sign in with email and password.", "error")
-        return redirect(url_for("signin"))
+        return redirect(url_for("signin", error="google_unavailable"))
 
     redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI") or url_for("google_callback", _external=True)
     return oauth.google.authorize_redirect(redirect_uri)
@@ -529,8 +554,7 @@ def google_login():
 @app.route("/auth/google/callback")
 def google_callback():
     if not google_oauth_enabled:
-        flash("Google sign-in is not configured yet. You can sign in with email and password.", "error")
-        return redirect(url_for("signin"))
+        return redirect(url_for("signin", error="google_unavailable"))
 
     try:
         token = oauth.google.authorize_access_token()
@@ -543,8 +567,7 @@ def google_callback():
             raise ValueError("Google did not return verified OpenID profile claims")
         email = (profile.get("email") or "").strip().lower()
         if not profile.get("sub") or not email or profile.get("email_verified") is not True:
-            flash("Google did not provide a verified email address. Please try again.", "error")
-            return redirect(url_for("signin"))
+            return redirect(url_for("signin", error="google_unverified"))
 
         with SessionLocal.begin() as db:
             row = db.scalar(select(User).where(User.email == email))
@@ -575,8 +598,7 @@ def google_callback():
         return redirect(url_for("index"))
     except Exception:
         app.logger.exception("Google sign-in failed")
-        flash("Google sign-in failed. Please try again or use email and password.", "error")
-        return redirect(url_for("signin"))
+        return redirect(url_for("signin", error="google_failed"))
 
 
 @app.route("/api/auth/logout", methods=["POST"])
@@ -589,26 +611,23 @@ def logout():
 
 @app.route("/")
 def index():
-    # Keep authentication completely separate from the chat page.
-    user = current_user()
-    if not user:
-        return redirect(url_for("signin"))
-    can_set_password = user["auth_provider"] == "google" or time.time() - session.get("google_verified_at", 0) < 300
-    return render_template("index.html", user=user, can_set_password=can_set_password)
+    return send_from_directory(FRONTEND_BUILD_DIR, "index.html")
 
 
 @app.route("/signin")
 def signin():
-    if current_user():
-        return redirect(url_for("index"))
-    return render_template("signin.html")
+    return send_from_directory(FRONTEND_BUILD_DIR, "signin.html")
 
 
 @app.route("/signup")
 def signup():
-    if current_user():
-        return redirect(url_for("index"))
-    return render_template("signup.html")
+    return send_from_directory(FRONTEND_BUILD_DIR, "signup.html")
+
+
+@app.route("/<path:asset_path>")
+def frontend_asset(asset_path):
+    """Serve exported Next.js assets and static routes from the same origin."""
+    return send_from_directory(FRONTEND_BUILD_DIR, asset_path)
 
 
 # ---------- chat endpoints (every query is scoped to the logged-in user) ----------
