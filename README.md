@@ -104,7 +104,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Install Node.js 22 and pnpm 12, then build the static frontend:
+Install Node.js 22 and pnpm 11.19.0, then build the static frontend:
 
 ```bash
 cd frontend

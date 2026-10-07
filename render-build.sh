@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 NODE_VERSION="22.14.0"
+PNPM_VERSION="11.19.0"
 NODE_HOME="${TMPDIR:-/tmp}/patrick-node-${NODE_VERSION}"
 
 # The existing Render service uses Python, so install a pinned Node runtime in
@@ -15,7 +16,7 @@ fi
 export PATH="${NODE_HOME}/bin:${PATH}"
 
 python -m pip install -r "${ROOT_DIR}/requirements.txt"
-corepack enable --install-directory "${NODE_HOME}/bin"
+"${NODE_HOME}/bin/npm" install --global --prefix "${NODE_HOME}" "pnpm@${PNPM_VERSION}"
 cd "${ROOT_DIR}/frontend"
-corepack pnpm install --frozen-lockfile
-corepack pnpm build
+"${NODE_HOME}/bin/pnpm" install --frozen-lockfile
+"${NODE_HOME}/bin/pnpm" build
