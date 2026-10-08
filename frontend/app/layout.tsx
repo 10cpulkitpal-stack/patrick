@@ -2,25 +2,12 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Patrick — AI workspace',
-  description: 'A calm, focused workspace for questions, ideas, and thoughtful work with Patrick.',
+  title: 'Patrick — AI chatbot',
+  description: 'Chat with Patrick, your AI assistant for questions, ideas, and thoughtful work.',
   generator: 'Patrick',
   icons: {
-    icon: [
-      {
-        url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
-      },
-    ],
-    apple: '/apple-icon.png',
+    icon: '/icon-patrick.svg',
+    apple: '/icon-patrick.svg',
   },
 }
 
