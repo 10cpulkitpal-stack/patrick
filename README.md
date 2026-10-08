@@ -176,7 +176,7 @@ Open the address in your browser. Run commands from the repository root. For loc
 | `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM` | Required for email/password signup | SMTP settings used to send account verification links. Keep the password private. Gmail users should use an app password. |
 | `PUBLIC_BASE_URL` | Recommended | Public base URL used in verification emails (for example, `https://patrick-c89f.onrender.com`). |
 | `DAILY_MESSAGE_LIMIT` | No | Maximum user messages per account per UTC day. Defaults to `100`; each account is also limited to 20 messages per hour and each IP to 60 per hour. |
-| `DATABASE_URL` | No | Database connection URL. Defaults to `sqlite:///patrick.db`. |
+| `DATABASE_URL` | Yes in production | Persistent PostgreSQL connection URL. Local development defaults to `sqlite:///patrick.db`; production startup refuses SQLite because Render's local filesystem is ephemeral. |
 | `PORT` | No | Port for the Flask application. Defaults to `5000` |
 | `FLASK_DEBUG` | No | Enables Flask debug mode only for local development; defaults to `false` and is ignored in production. |
 

@@ -91,7 +91,9 @@ ai_service = AIService(
     gemini_default=GEMINI_DEFAULT_MODEL, max_output_tokens=MAX_OUTPUT_TOKENS,
 )
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///patrick.db")
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///patrick.db").strip()
+if is_production and (not DATABASE_URL or DATABASE_URL.startswith("sqlite")):
+    raise RuntimeError("Set DATABASE_URL to a persistent hosted PostgreSQL database in production.")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
 elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
@@ -103,6 +105,7 @@ engine = create_engine(
     pool_pre_ping=True,
     connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
 )
+app.logger.info("Configured database backend: %s", engine.dialect.name)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 chat_store = ChatStore(SessionLocal)
 auth_service = AuthService(app, SessionLocal)
@@ -359,6 +362,9 @@ def add_security_headers(response):
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
     if is_production:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
     return response
 
 
@@ -817,6 +823,8 @@ def send_message(chat_id):
             if chat_row:
                 chat_row.title = new_title[:255]
 
+    selected_provider = None
+    selected_model = None
     try:
         model_history = chat_store.model_history(chat_id)
         needs_vision = any(
@@ -844,7 +852,10 @@ def send_message(chat_id):
         return jsonify({"reply": reply, "title": new_title})
 
     except Exception:
-        app.logger.exception("Message generation failed for chat %s", chat_id)
+        app.logger.exception(
+            "Message generation failed for chat %s (provider=%s, model=%s)",
+            chat_id, selected_provider, selected_model,
+        )
         return jsonify({"error": "Patrick couldn't generate a reply right now. Please try again."}), 502
 
 

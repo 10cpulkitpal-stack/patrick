@@ -149,17 +149,21 @@ export function PatrickWorkspace() {
         }
         setAccount(profile.user)
         setProfileName(profile.user.display_name || profile.user.email.split('@')[0])
-        const [chatList, models] = await Promise.all([
-          apiRequest<ChatSummary[]>('/api/chats'),
-          apiRequest<{ models: ModelOption[]; provider: string | null; model: string | null }>('/api/models'),
-        ])
+        // Load and display chat history independently from provider discovery.
+        // A temporary model-provider outage must not make saved chats appear lost.
+        const chatList = await apiRequest<ChatSummary[]>('/api/chats')
         setChats(chatList)
-        setModelOptions(models.models)
-        setModelSelection(models.provider && models.model ? `${models.provider}:${models.model}` : '')
         if (chatList.length) {
           await openChat(chatList[0].id)
         } else {
           await createChat()
+        }
+        try {
+          const models = await apiRequest<{ models: ModelOption[]; provider: string | null; model: string | null }>('/api/models')
+          setModelOptions(models.models)
+          setModelSelection(models.provider && models.model ? `${models.provider}:${models.model}` : '')
+        } catch (error) {
+          showNotice(error instanceof Error ? error.message : 'Could not load AI models.')
         }
       } catch (error) {
         showNotice(error instanceof Error ? error.message : 'Could not connect to Patrick.')

@@ -92,11 +92,16 @@ class AIService:
         last_error = None
         for index, model in enumerate(candidates):
             try:
-                response = self.groq_client.chat.completions.create(
-                    model=model,
-                    max_tokens=self.max_output_tokens,
-                    messages=[{"role": "system", "content": system_prompt}] + messages,
-                )
+                completion_options = {
+                    "model": model,
+                    "max_completion_tokens": self.max_output_tokens,
+                    "messages": [{"role": "system", "content": system_prompt}] + messages,
+                }
+                if model.startswith("openai/gpt-oss-"):
+                    # Keep reasoning from consuming the entire completion budget
+                    # before GPT-OSS produces user-visible text.
+                    completion_options["reasoning_effort"] = "low"
+                response = self.groq_client.chat.completions.create(**completion_options)
                 choice = response.choices[0] if response.choices else None
                 reply = (choice.message.content or "").strip() if choice else ""
                 if not reply:
