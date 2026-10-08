@@ -83,6 +83,7 @@ MAX_OUTPUT_TOKENS = max(1024, min(16384, int(os.environ.get("GROQ_MAX_OUTPUT_TOK
 MODEL_CACHE_SECONDS = 1800
 available_models_cache = {"expires_at": 0, "models": []}
 DAILY_MESSAGE_LIMIT = max(1, int(os.environ.get("DAILY_MESSAGE_LIMIT", "100")))
+NON_CHAT_MODEL_MARKERS = ("whisper", "tts", "speech", "transcribe", "embedding", "orpheus")
 ai_service = AIService(
     client, gemini_client, app.logger,
     text_model=MODEL, text_fallback=TEXT_FALLBACK_MODEL,
@@ -157,7 +158,7 @@ def available_models():
             model_id = getattr(model, "id", "")
             if not model_id or getattr(model, "active", True) is False:
                 continue
-            if any(part in model_id.lower() for part in ("whisper", "tts", "speech", "transcribe", "embedding")):
+            if any(part in model_id.lower() for part in NON_CHAT_MODEL_MARKERS):
                 continue
             models.append({"provider": "groq", "id": model_id, "label": f"Groq · {model_id}"})
     except Exception:
@@ -179,6 +180,24 @@ def available_models():
     available_models_cache["models"] = models
     available_models_cache["expires_at"] = now + MODEL_CACHE_SECONDS
     return models
+
+
+def default_chat_model(models, *, vision=False, provider_hint=None, allow_unlisted=False):
+    """Choose a chat-capable configured model, never a speech-only model."""
+    groq_primary = VISION_MODEL if vision else MODEL
+    groq_fallback = VISION_FALLBACK_MODEL if vision else TEXT_FALLBACK_MODEL
+    groq_choices = [("groq", model) for model in (groq_primary, groq_fallback)
+                    if model and not any(marker in model.lower() for marker in NON_CHAT_MODEL_MARKERS)]
+    gemini_choices = [("gemini", GEMINI_DEFAULT_MODEL)] if gemini_client and GEMINI_DEFAULT_MODEL else []
+    choices = gemini_choices + groq_choices if provider_hint == "gemini" else groq_choices + gemini_choices
+    available = {(item["provider"], item["id"]) for item in models}
+    for choice in choices:
+        if choice in available:
+            return choice
+    if models:
+        first = models[0]
+        return first["provider"], first["id"]
+    return choices[0] if allow_unlisted and choices else (None, None)
 
 
 def get_user_model_preference(user_id):
@@ -374,8 +393,12 @@ def list_available_models():
     available = {(item["provider"], item["id"]) for item in models}
     saved_preference = (provider, model) in available
     if (provider, model) not in available:
-        defaults = [("groq", MODEL), ("gemini", GEMINI_DEFAULT_MODEL)]
-        provider, model = next((choice for choice in defaults if choice in available), (None, None))
+        provider, model = default_chat_model(models, provider_hint=provider)
+        if provider and model:
+            with SessionLocal.begin() as db:
+                account = db.get(User, user["id"])
+                if account:
+                    account.preferred_provider, account.preferred_model = provider, model
     return jsonify({"models": models, "provider": provider, "model": model, "saved": saved_preference})
 
 
@@ -801,8 +824,19 @@ def send_message(chat_id):
             for message in model_history
         )
         preferred_provider, preferred_model = get_user_model_preference(user["id"])
-        selected_provider = preferred_provider or "groq"
-        selected_model = preferred_model or (VISION_MODEL if needs_vision else MODEL)
+        models = available_models()
+        model_pairs = {(item["provider"], item["id"]) for item in models}
+        if (preferred_provider, preferred_model) in model_pairs:
+            selected_provider, selected_model = preferred_provider, preferred_model
+        else:
+            selected_provider, selected_model = default_chat_model(
+                models, vision=needs_vision, provider_hint=preferred_provider, allow_unlisted=True,
+            )
+            if selected_provider and selected_model:
+                with SessionLocal.begin() as db:
+                    account = db.get(User, user["id"])
+                    if account:
+                        account.preferred_provider, account.preferred_model = selected_provider, selected_model
         reply = generate_reply(model_history, vision=needs_vision, provider=selected_provider, selected_model=selected_model, user=user)
         with SessionLocal.begin() as db:
             db.add(Message(id=str(uuid.uuid4()), chat_id=chat_id, role="assistant", content=reply, created_at=time.time()))
