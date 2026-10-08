@@ -36,9 +36,13 @@ class ChatStore:
             messages.append(message)
         return messages
 
-    def model_history(self, chat_id):
+    def model_history(self, chat_id, db=None):
         """Build bounded model context and retain the newest image attachments."""
-        with self.session_factory() as db:
+        if db is None:
+            with self.session_factory() as db:
+                rows = db.scalars(select(Message).where(Message.chat_id == chat_id)
+                                  .order_by(Message.created_at.desc(), Message.id.desc()).limit(16)).all()
+        else:
             rows = db.scalars(select(Message).where(Message.chat_id == chat_id)
                               .order_by(Message.created_at.desc(), Message.id.desc()).limit(16)).all()
         rows = list(reversed(rows))

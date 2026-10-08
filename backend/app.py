@@ -13,8 +13,8 @@ from urllib.parse import urlsplit
 
 from flask import Flask, request, jsonify, session, redirect, url_for, send_from_directory
 from authlib.integrations.flask_client import OAuth
-from groq import Groq
 from google import genai
+from groq import Groq
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import case, create_engine, delete, event, func, select
@@ -42,6 +42,25 @@ is_production = (
 secret_key = os.environ.get("SECRET_KEY")
 if is_production and not secret_key:
     raise RuntimeError("Set a strong SECRET_KEY before running in production.")
+
+# Frontend hosted on a different origin (e.g. Vercel). Vercel proxies /api/* and
+# /auth/* to this service, so browsers send Origin: https://<your-app>.vercel.app
+# while request.host is the Render hostname. List the exact origins to accept.
+def _normalize_origin(value):
+    parts = urlsplit((value or "").strip())
+    if not parts.scheme or not parts.netloc:
+        return None
+    return f"{parts.scheme}://{parts.netloc}".lower()
+
+
+FRONTEND_ORIGINS = {
+    origin for origin in (_normalize_origin(item) for item in os.environ.get("FRONTEND_URL", "").split(","))
+    if origin
+}
+# Behind Vercel's proxy every request reaches Render from Vercel's servers, so
+# per-IP rate limits would be shared by all users. Set TRUST_FORWARDED_FOR=true
+# to use the first X-Forwarded-For entry (the client IP Vercel forwards) instead.
+TRUST_FORWARDED_FOR = os.environ.get("TRUST_FORWARDED_FOR", "").strip().lower() in {"1", "true", "yes"}
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_BUILD_DIR = os.path.join(PROJECT_ROOT, "frontend", "out")
@@ -74,20 +93,7 @@ if google_oauth_enabled:
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-
-
-def create_gemini_client(api_key):
-    if not api_key:
-        return None
-    try:
-        return genai.Client(api_key=api_key)
-    except Exception as error:
-        app.logger.warning("Gemini client initialization failed; Gemini models are disabled (%s)",
-                           type(error).__name__)
-        return None
-
-
-gemini_client = create_gemini_client(gemini_api_key)
+gemini_client = genai.Client(api_key=gemini_api_key) if gemini_api_key else None
 MODEL = os.environ.get("GROQ_TEXT_MODEL", "openai/gpt-oss-120b").strip()
 TEXT_FALLBACK_MODEL = os.environ.get("GROQ_TEXT_FALLBACK_MODEL", "openai/gpt-oss-20b").strip()
 VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip()
@@ -105,9 +111,7 @@ ai_service = AIService(
     gemini_default=GEMINI_DEFAULT_MODEL, max_output_tokens=MAX_OUTPUT_TOKENS,
 )
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///patrick.db").strip()
-if is_production and (not DATABASE_URL or DATABASE_URL.startswith("sqlite")):
-    raise RuntimeError("Set DATABASE_URL to a persistent hosted PostgreSQL database in production.")
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///patrick.db")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
 elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
@@ -119,7 +123,6 @@ engine = create_engine(
     pool_pre_ping=True,
     connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
 )
-app.logger.info("Configured database backend: %s", engine.dialect.name)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 chat_store = ChatStore(SessionLocal)
 auth_service = AuthService(app, SessionLocal)
@@ -191,9 +194,8 @@ def available_models():
                 model_id = model_id.removeprefix("models/")
                 if model_id and not any(part in model_id.lower() for part in ("embedding", "tts", "live", "transcri", "image")):
                     models.append({"provider": "gemini", "id": model_id, "label": f"Gemini · {model_id}"})
-        except Exception as error:
-            app.logger.warning("Gemini model discovery failed; Gemini models are disabled (%s)",
-                               type(error).__name__)
+        except Exception:
+            app.logger.exception("Could not load available Gemini models")
     models.sort(key=lambda model: (model["provider"], model["id"].lower()))
     available_models_cache["models"] = models
     available_models_cache["expires_at"] = now + MODEL_CACHE_SECONDS
@@ -236,6 +238,10 @@ last_rate_cleanup = 0.0
 
 
 def client_ip():
+    if TRUST_FORWARDED_FOR:
+        forwarded = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if forwarded:
+            return forwarded[:128]
     # Render's Cloudflare edge sets this header from the actual client address.
     # Do not trust a caller-supplied X-Forwarded-For chain.
     if is_production:
@@ -322,6 +328,8 @@ def protect_state_changing_requests():
         referer = urlsplit(request.headers["Referer"])
         origin = f"{referer.scheme}://{referer.netloc}"
     parsed_origin = urlsplit(origin or "")
+    if _normalize_origin(origin) in FRONTEND_ORIGINS:
+        return None
     expected_scheme = "https" if is_production else request.scheme
     if (
         not parsed_origin.scheme
@@ -366,7 +374,7 @@ def add_security_headers(response):
         "Content-Security-Policy",
         "default-src 'self'; "
         f"script-src 'self' {inline_script_hashes}; "
-        "style-src 'self'; style-src-attr 'unsafe-inline'; "
+        "style-src 'self'; style-src-attr 'none'; "
         "font-src 'self' data:; "
         "img-src 'self' data: blob:; connect-src 'self'; "
         "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
@@ -377,10 +385,13 @@ def add_security_headers(response):
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
     if is_production:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
-    if request.path.startswith("/api/"):
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        response.headers["Pragma"] = "no-cache"
     return response
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    """Lightweight liveness ping for UptimeRobot (no auth, no database)."""
+    return jsonify({"status": "ok"}), 200
 
 
 @app.route("/healthz", methods=["GET"])
@@ -553,6 +564,11 @@ def verify_email():
     return redirect(url_for("signin", verified="1"))
 
 
+@app.route("/api/auth/verify-email", methods=["POST"])
+def api_verify_email():
+    return verify_email()
+
+
 @app.route("/api/auth/login", methods=["POST"])
 @rate_limit_ip("login_ip", 20, 900)
 def login():
@@ -672,16 +688,6 @@ def signup():
 def frontend_asset(asset_path):
     """Serve exported Next.js assets and static routes from the same origin."""
     return send_from_directory(FRONTEND_BUILD_DIR, asset_path)
-
-
-@app.errorhandler(404)
-def not_found(error):
-    if request.path.startswith("/api/"):
-        return jsonify({"error": "Not found"}), 404
-    not_found_page = os.path.join(FRONTEND_BUILD_DIR, "404.html")
-    if os.path.isfile(not_found_page):
-        return send_from_directory(FRONTEND_BUILD_DIR, "404.html"), 404
-    return error
 
 
 # ---------- chat endpoints (every query is scoped to the logged-in user) ----------
@@ -848,8 +854,6 @@ def send_message(chat_id):
             if chat_row:
                 chat_row.title = new_title[:255]
 
-    selected_provider = None
-    selected_model = None
     try:
         model_history = chat_store.model_history(chat_id)
         needs_vision = any(
@@ -877,10 +881,7 @@ def send_message(chat_id):
         return jsonify({"reply": reply, "title": new_title})
 
     except Exception:
-        app.logger.exception(
-            "Message generation failed for chat %s (provider=%s, model=%s)",
-            chat_id, selected_provider, selected_model,
-        )
+        app.logger.exception("Message generation failed for chat %s", chat_id)
         return jsonify({"error": "Patrick couldn't generate a reply right now. Please try again."}), 502
 
 

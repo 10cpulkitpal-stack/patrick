@@ -4,12 +4,9 @@ Patrick is a ChatGPT-style chatbot built with **Flask**, **Next.js**, **SQLAlche
 
 It provides persistent chat conversations, image understanding, voice input/output, light/dark themes, chat management, and a responsive interface for desktop and mobile browsers.
 
-## 🌐 Live Demo
+## 🌐 Deployment
 
-**Try Patrick online:**  
-https://patrick-c89f.onrender.com/
-
-> The application is hosted on Render and may take a short time to wake up if the free instance has been inactive.
+Patrick is configured as one Vercel project. Add the deployed Vercel URL after the first successful deployment.
 
 ## ✨ Features
 
@@ -59,8 +56,11 @@ patrick-chatbot/
 │   ├── app/                # Next.js app, auth pages, and styles
 │   ├── components/         # Patrick chat workspace and UI
 │   ├── public/             # Browser assets
-│   └── out/                # Generated static site served by Flask (not committed)
-├── render-build.sh         # Builds frontend and installs Python requirements on Render
+│   └── out/                # Generated static site for local Flask serving (not committed)
+├── public/                 # Generated Vercel static files (not committed)
+├── vercel-build.sh         # Exports Next.js and copies files into public/
+├── vercel.json             # Function region, streaming duration, and build settings
+├── app.py                  # Vercel Flask Function entry point
 ├── alembic.ini
 ├── tests/                 # Automated unit tests
 ├── requirements.txt
@@ -101,7 +101,7 @@ source venv/bin/activate
 ### 3. Install dependencies
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 Install Node.js 22 and pnpm 11.19.0, then build the static frontend:
@@ -122,16 +122,15 @@ GROQ_API_KEY=your-groq-api-key-here
 SECRET_KEY=replace-with-a-long-random-secret
 GOOGLE_CLIENT_ID=your-google-oauth-client-id
 GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
-GOOGLE_REDIRECT_URI=http://127.0.0.1:5000/auth/google/callback
 MAIL_SERVER=smtp.gmail.com
 MAIL_PORT=587
 MAIL_USERNAME=your-email@gmail.com
 MAIL_PASSWORD=your-email-app-password
 MAIL_FROM="Patrick <your-email@gmail.com>"
-PUBLIC_BASE_URL=http://127.0.0.1:5000
 ```
 
 You can use `.env.example` as a template.
+For local Google sign-in, leave `GOOGLE_REDIRECT_URI` unset so Flask uses the local callback automatically. Set `PUBLIC_BASE_URL` and `GOOGLE_REDIRECT_URI` only for your deployed Vercel domain.
 
 **Never commit your `.env` file or expose your API key publicly.**
 
@@ -146,7 +145,7 @@ alembic upgrade head
 ### 6. Run locally
 
 ```bash
-gunicorn --bind 127.0.0.1:5000 backend.app:app
+python -m backend.app
 ```
 
 The server will normally start at:
@@ -171,42 +170,66 @@ Open the address in your browser. Run commands from the repository root. For loc
 | `GEMINI_DEFAULT_MODEL` | No | Gemini model selected for new accounts when available; defaults to the stable `gemini-3.8-flash`. |
 | `SECRET_KEY` | Yes in production | Flask session signing key. Set a long, random value before deployment. |
 | `GOOGLE_CLIENT_ID` | Optional | OAuth client ID from Google Cloud Console. Enables Google sign-in when paired with the secret. |
-| `GOOGLE_CLIENT_SECRET` | Optional | OAuth client secret. Keep it private and store it as a Render environment variable in production. |
-| `GOOGLE_REDIRECT_URI` | Optional | On Render, use `https://patrick-c89f.onrender.com/auth/google/callback`. |
+| `GOOGLE_CLIENT_SECRET` | Optional | OAuth client secret. Keep it private and store it as a Vercel environment variable in production. |
+| `GOOGLE_REDIRECT_URI` | Optional | On Vercel, use `https://<your-vercel-domain>/auth/google/callback`. |
 | `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM` | Required for email/password signup | SMTP settings used to send account verification links. Keep the password private. Gmail users should use an app password. |
-| `PUBLIC_BASE_URL` | Required for Render | Set to `https://patrick-c89f.onrender.com` for verification links. |
+| `PUBLIC_BASE_URL` | Required in production | Set to `https://<your-vercel-domain>` for verification links. |
 | `DAILY_MESSAGE_LIMIT` | No | Maximum user messages per account per UTC day. Defaults to `100`; each account is also limited to 20 messages per hour and each IP to 60 per hour. |
-| `DATABASE_URL` | Yes in production | Persistent PostgreSQL connection URL. Local development defaults to `sqlite:///patrick.db`; production startup refuses SQLite because Render's local filesystem is ephemeral. |
+| `DATABASE_URL` | Yes in production | Persistent Aiven PostgreSQL URL ending in `?sslmode=require`. Local development defaults to `sqlite:///patrick.db`; production startup refuses SQLite. |
 | `PORT` | No | Port for the Flask application. Defaults to `5000` |
 | `FLASK_DEBUG` | No | Enables Flask debug mode only for local development; defaults to `false` and is ignored in production. |
 
-## Render deployment
+## Vercel deployment
 
-Deploy the repository root to one Render Python web service. The frontend is statically exported during the Render build and Flask serves it from the same origin as the API and session cookie.
+Patrick is one Vercel project with one public origin. The root `app.py` exports the Flask WSGI app as a Python Function; Vercel sends dynamic requests to Flask. The Next.js app is statically exported from `frontend/out` and copied to the root `public/` directory at build time, which Vercel serves as static files. Browser requests stay on the same origin: `/api/*`, `/auth/*`, `/verify-email`, and `/healthz` are Flask routes, while pages and `/_next/*` assets are static files. Session cookies remain `SameSite=Lax`, and the existing same-origin/CSRF check stays enabled.
 
-| Render setting | Value |
+Vercel's current Services feature is still private beta and requires access. This project uses the documented single-Flask-Function approach, which works without that beta and supports Python streaming.
+
+Configure the Vercel project:
+
+| Setting | Value |
 |---|---|
-| Build Command | `bash render-build.sh` |
-| Start Command | `alembic upgrade head && gunicorn backend.app:app` |
-| Health Check Path | `/healthz` |
+| Root Directory | Repository root (`.`) |
+| Framework Preset | Flask |
+| Install Command | `cd frontend && pnpm install --frozen-lockfile` |
+| Build Command | `bash vercel-build.sh` |
+| Function region | `bom1` (Mumbai) |
+| Fluid Compute | Enabled; `vercel.json` configures it |
+| Function duration | 300 seconds, Vercel Hobby's current maximum with Fluid Compute |
 
-Set these environment variables in Render (never commit their secret values):
+Vercel's Hobby plan supports selecting one Function region; `bom1` is available. Static assets remain served at the edge. The project uses Vercel's Flask adapter and Python runtime, which Vercel documents as supporting streamed responses.
 
-- Required: `SECRET_KEY`, `GROQ_API_KEY`, `DATABASE_URL`, `PUBLIC_BASE_URL`.
-- Optional Gemini: `GEMINI_API_KEY`; optionally set `GEMINI_DEFAULT_MODEL` (defaults to `gemini-3.8-flash`). An invalid or missing Gemini key disables Gemini model discovery without disabling Groq.
+Set these variables in Vercel Project Settings → Environment Variables. Add secrets separately for Production and Preview as needed; do not commit them:
+
+- Required: `FLASK_ENV=production`, `SECRET_KEY`, `GROQ_API_KEY`, `DATABASE_URL`, `PUBLIC_BASE_URL`.
+- Optional Gemini: `GEMINI_API_KEY`; optionally `GEMINI_DEFAULT_MODEL` (defaults to `gemini-3.8-flash`). A missing or invalid Gemini key disables Gemini only.
 - Optional Google sign-in: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`.
 - Email verification: `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`.
+- Optional message cap: `DAILY_MESSAGE_LIMIT` (defaults to `100`).
 
-Set `PUBLIC_BASE_URL` to `https://patrick-c89f.onrender.com`. Set `GOOGLE_REDIRECT_URI` to `https://patrick-c89f.onrender.com/auth/google/callback`. Add that exact callback under **Authorized redirect URIs** in Google Cloud Console. Use a persistent hosted PostgreSQL URL for `DATABASE_URL`.
+Set `PUBLIC_BASE_URL` to `https://<your-vercel-domain>` and `GOOGLE_REDIRECT_URI` to `https://<your-vercel-domain>/auth/google/callback`. The latter must exactly match a Google Cloud Console **Authorized redirect URI**. Add `https://<your-vercel-domain>` as an authorized JavaScript origin. Use the production domain for production deployment; configure a separate callback if you enable Google OAuth in Preview.
 
-Until SMTP is configured, email/password signup and verification for existing password accounts are unavailable; Google sign-in continues to work.
+Email/password sign-up requires working SMTP settings. Google sign-in remains available when configured.
+
+### Prepare Aiven PostgreSQL
+
+Set `DATABASE_URL` to the Aiven PostgreSQL connection URL with `sslmode=require`. The app converts `postgres://` and `postgresql://` URLs to the installed `psycopg` SQLAlchemy driver form. Vercel requests use SQLAlchemy `NullPool`, a 5-second connection timeout, and 15-second statement/5-second lock timeouts; transactions are short so the AI stream does not hold a database connection. Aiven's Free PostgreSQL plan has a server-enforced maximum of 20 connections and does not include a connection pooler. If concurrent traffic reaches that hard limit, extra connections will be refused; monitor Aiven's connection metrics.
+
+Do not create or migrate the schema during Flask import or a Vercel Function invocation. Before the first deployment and after each schema migration, run this from the repository root on a machine with network access to Aiven and local development dependencies installed. Keep the Aiven URL in an uncommitted local `.env` file:
+
+```bash
+python -m pip install -r requirements-dev.txt
+alembic upgrade head
+```
+
+The `alembic` command reads `DATABASE_URL` from `.env`. Confirm it points to the Aiven database before running the migration.
 
 ### Set up Google sign-in
 
 1. Create a **Web application** OAuth client in Google Cloud Console and configure the OAuth consent screen.
-2. Add your local callback URL, `http://127.0.0.1:5000/auth/google/callback`, as an authorized redirect URI.
-3. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in your local `.env` file.
-4. For Render, add `https://patrick-c89f.onrender.com/auth/google/callback` to the OAuth client's authorized redirect URIs. Set the same URL as `GOOGLE_REDIRECT_URI` and add both Google credentials in Render's environment settings.
+2. For local testing, add `http://127.0.0.1:5000/auth/google/callback` as an authorized redirect URI. Leave `GOOGLE_REDIRECT_URI` unset locally so Flask uses that host automatically.
+3. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in your local `.env` file.
+4. For Vercel, add `https://<your-vercel-domain>/auth/google/callback` to the OAuth client's authorized redirect URIs. Set that exact URL as `GOOGLE_REDIRECT_URI` and add both Google credentials in Vercel's environment settings. Add `https://<your-vercel-domain>` as an authorized JavaScript origin.
 
 Google sign-in requires a verified Google email. If that email already has a Patrick account, signing in with Google opens that account; otherwise, Patrick creates one. Email/password sign-in remains available without Google credentials, but new email/password accounts must verify their email first. Configure the SMTP settings above before enabling email/password registration in production.
 
@@ -243,7 +266,7 @@ This model is used when a recent message includes an image. Image attachments an
 
 If Groq changes model availability, set these environment variables to model IDs enabled for your Groq account. The app bounds prompt history to the latest 16 messages and 32,000 characters, and falls back for empty or unavailable default Groq model responses.
 
-To enable Gemini in production, create an API key in Google AI Studio and add it to Render as `GEMINI_API_KEY`. All users share the API credentials configured by the site owner, so availability, quotas, and billing follow those provider accounts. Users can only select models exposed by the configured keys.
+To enable Gemini in production, create an API key in Google AI Studio and add it to Vercel as `GEMINI_API_KEY`. All users share the API credentials configured by the site owner, so availability, quotas, and billing follow those provider accounts. Users can only select models exposed by the configured keys.
 
 ## 🔄 How It Works
 
@@ -388,7 +411,7 @@ Patrick uses SQLAlchemy ORM models with Alembic-managed schema migrations. Local
 patrick.db
 ```
 
-Set `DATABASE_URL` to a PostgreSQL connection string for a hosted deployment. Run `alembic upgrade head` from the repository root as a deployment pre-start step, before Gunicorn launches workers. On Render, set the service's **Pre-Deploy Command** to `alembic upgrade head` when available; otherwise use a Start Command of `alembic upgrade head && gunicorn backend.app:app`. Do not create schema at Python import time.
+Set `DATABASE_URL` to a PostgreSQL connection string for a hosted deployment. Before the first deployment and each schema change, run `alembic upgrade head` locally from the repository root with the Aiven URL in `.env`. Do not create schema at Python import time.
 
 ## 🔒 Security Notes
 
@@ -397,7 +420,7 @@ Before deploying Patrick publicly:
 1. Keep API keys in environment variables.
 2. Never commit `.env`.
 3. Do not expose private conversation data.
-4. Set a strong `SECRET_KEY` (required when `FLASK_ENV=production` or running on Render).
+4. Set a strong `SECRET_KEY` (required when `FLASK_ENV=production`).
 5. Keep SMTP verification, persisted IP/user rate limits, and same-origin request checks enabled.
 6. Use HTTPS in production.
 7. Disable Flask debug mode in production.
@@ -405,8 +428,9 @@ Before deploying Patrick publicly:
 For production:
 
 ```env
+FLASK_ENV=production
 FLASK_DEBUG=false
-PUBLIC_BASE_URL=https://patrick-c89f.onrender.com
+PUBLIC_BASE_URL=https://<your-vercel-domain>
 ```
 
 ## 🧪 Development
@@ -417,7 +441,7 @@ Run the application with:
 python -m backend.app
 ```
 
-The production server is Gunicorn (`gunicorn backend.app:app`). Set the Render health-check path to `/healthz`. Run migrations before deploying code that requires a new schema revision.
+The deployment server is Vercel's Python Function runtime. Use `/healthz` for a database readiness check. Run migrations before deploying code that requires a new schema revision.
 
 Run the automated tests with:
 

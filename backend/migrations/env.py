@@ -34,7 +34,6 @@ def run_migrations_online():
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        # Several Render instances can start the same command concurrently.
         # Serialize PostgreSQL upgrades before Alembic creates/updates its
         # version table; the lock is released even if an upgrade fails.
         postgres_lock = connection.dialect.name == "postgresql"

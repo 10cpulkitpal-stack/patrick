@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://patrick-c89f.onrender.com/api/:path*" },
+    { "source": "/auth/:path*", "destination": "https://patrick-c89f.onrender.com/auth/:path*" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+      ]
+    }
+  ]
+}

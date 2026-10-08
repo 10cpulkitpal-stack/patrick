@@ -127,3 +127,89 @@ class AIService:
         if last_error:
             raise last_error
         raise RuntimeError("No Groq model is configured")
+
+    def generate_reply_stream(self, messages, vision=False, provider="groq", selected_model=None, user=None):
+        """Yield user-visible text as provider chunks arrive."""
+        system_prompt = build_system_prompt(user)
+        if provider == "gemini":
+            model = selected_model or self.gemini_default
+            emitted = False
+            try:
+                if not self.gemini_client:
+                    raise RuntimeError("Gemini is not configured")
+                stream = self.gemini_client.models.generate_content_stream(
+                    model=model,
+                    contents=self._gemini_contents(messages),
+                    config=genai_types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        max_output_tokens=self.max_output_tokens,
+                    ),
+                )
+                for chunk in stream:
+                    text = (getattr(chunk, "text", None) or "")
+                    if text:
+                        emitted = True
+                        yield text
+                if not emitted:
+                    raise RuntimeError(f"Gemini model {model} returned an empty answer")
+                return
+            except Exception:
+                if emitted:
+                    raise
+                self.logger.warning("Gemini model %s failed before streaming; retrying with Groq", model)
+                groq_model = self.vision_model if vision else self.text_model
+                yield from self.generate_reply_stream(
+                    messages, vision=vision, provider="groq",
+                    selected_model=groq_model, user=user,
+                )
+                return
+
+        primary = selected_model or (self.vision_model if vision else self.text_model)
+        fallback = (self.vision_fallback if vision and primary == self.vision_model
+                    else self.text_fallback if not vision and primary == self.text_model else "")
+        candidates = list(dict.fromkeys(model for model in (primary, fallback) if model))
+        last_error = None
+        for index, model in enumerate(candidates):
+            emitted = False
+            try:
+                completion_options = {
+                    "model": model,
+                    "max_completion_tokens": self.max_output_tokens,
+                    "messages": [{"role": "system", "content": system_prompt}] + messages,
+                    "stream": True,
+                }
+                if model.startswith("openai/gpt-oss-"):
+                    completion_options["reasoning_effort"] = "low"
+                    completion_options["include_reasoning"] = False
+                response_stream = self.groq_client.chat.completions.create(**completion_options)
+                hit_output_limit = False
+                for chunk in response_stream:
+                    choice = chunk.choices[0] if chunk.choices else None
+                    if not choice:
+                        continue
+                    text = choice.delta.content or ""
+                    if text:
+                        emitted = True
+                        yield text
+                    if choice.finish_reason == "length":
+                        hit_output_limit = True
+                if not emitted:
+                    last_error = RuntimeError(f"Groq model {model} returned an empty answer")
+                    continue
+                if hit_output_limit:
+                    yield "\n\n_(This answer reached the output limit and may be incomplete.)_"
+                return
+            except Exception as error:
+                if emitted:
+                    raise
+                last_error = error
+                status_code = getattr(error, "status_code", None)
+                if index + 1 >= len(candidates) or status_code not in {400, 404, 410, 422}:
+                    raise
+                self.logger.warning(
+                    "Groq model %s unavailable before streaming; retrying configured fallback %s",
+                    model, candidates[index + 1],
+                )
+        if last_error:
+            raise last_error
+        raise RuntimeError("No Groq model is configured")

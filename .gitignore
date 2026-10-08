@@ -9,3 +9,5 @@ patrick.db
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+public/
+.vercel/

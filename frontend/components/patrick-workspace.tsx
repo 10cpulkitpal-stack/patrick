@@ -49,6 +49,68 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T
 }
 
+async function streamMessage(
+  path: string,
+  body: string,
+  onText: (text: string) => void,
+): Promise<{ title: string }> {
+  const response = await fetch(path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body,
+    cache: 'no-store',
+  })
+  if (response.status === 401) {
+    window.location.assign('/signin')
+    throw new Error('Please sign in to continue.')
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+    throw new Error(payload.error || `Request failed (${response.status})`)
+  }
+  if (!response.body) throw new Error('Patrick could not open a reply stream. Please try again.')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffered = ''
+  let completed = false
+  let title = ''
+  const handleFrame = (frame: string) => {
+    let eventName = 'message'
+    const data: string[] = []
+    for (const line of frame.split(/\r?\n/)) {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim()
+      else if (line.startsWith('data:')) data.push(line.slice(5).trimStart())
+    }
+    if (!data.length) return
+    const payload = JSON.parse(data.join('\n')) as { text?: string; title?: string; error?: string }
+    if (eventName === 'token' && payload.text) onText(payload.text)
+    else if (eventName === 'done') {
+      completed = true
+      title = payload.title || 'New conversation'
+    } else if (eventName === 'error') {
+      throw new Error(payload.error || 'Patrick could not finish that reply. Please try again.')
+    }
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      buffered += decoder.decode(value, { stream: !done })
+      const frames = buffered.split(/\r?\n\r?\n/)
+      buffered = frames.pop() || ''
+      for (const frame of frames) handleFrame(frame)
+      if (done) break
+    }
+    if (buffered.trim()) handleFrame(buffered)
+  } finally {
+    reader.releaseLock()
+  }
+  if (!completed) throw new Error('The reply stream ended before Patrick finished. Please try again.')
+  return { title }
+}
+
 const suggestions = [
   {
     number: '01',
@@ -211,7 +273,7 @@ export function PatrickWorkspace() {
     try {
       const body: Record<string, unknown> = { message: text }
       if (selectedFile?.type.startsWith('image/')) {
-        if (selectedFile.size > 8 * 1024 * 1024) throw new Error('Images must be 8 MB or smaller.')
+        if (selectedFile.size > 2_500_000) throw new Error('Images must be 2.5 MB or smaller.')
         body.image = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader()
           reader.onload = () => resolve(String(reader.result))
@@ -229,10 +291,17 @@ export function PatrickWorkspace() {
         body.file_name = selectedFile.name
         body.file_truncated = fileText.length > 6000
       }
-      const result = await apiRequest<{ reply: string; title: string }>(`/api/chats/${activeChatId}/message`, {
-        method: 'POST', body: JSON.stringify(body),
+      let hasStreamedAssistant = false
+      const result = await streamMessage(`/api/chats/${activeChatId}/message`, JSON.stringify(body), (text) => {
+        if (!hasStreamedAssistant) {
+          hasStreamedAssistant = true
+          setMessages((current) => [...current, { role: 'assistant', content: text }])
+        } else {
+          setMessages((current) => current.map((message, index) => index === current.length - 1 && message.role === 'assistant'
+            ? { ...message, content: message.content + text }
+            : message))
+        }
       })
-      setMessages((current) => [...current, { role: 'assistant', content: result.reply }])
       setActiveChatTitle(result.title)
       setChats((current) => current.map((chat) => chat.id === activeChatId ? { ...chat, title: result.title } : chat))
     } catch (error) {
