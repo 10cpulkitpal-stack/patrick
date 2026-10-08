@@ -67,24 +67,32 @@ class AIService:
     def generate_reply(self, messages, vision=False, provider="groq", selected_model=None, user=None):
         system_prompt = build_system_prompt(user)
         if provider == "gemini":
-            if not self.gemini_client:
-                raise RuntimeError("Gemini is not configured. Set GEMINI_API_KEY on the server.")
             model = selected_model or self.gemini_default
-            response = self.gemini_client.models.generate_content(
-                model=model,
-                contents=self._gemini_contents(messages),
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    max_output_tokens=self.max_output_tokens,
-                ),
-            )
-            reply = (response.text or "").strip()
-            if not reply:
-                raise RuntimeError(f"Gemini model {model} returned an empty answer")
-            candidates = getattr(response, "candidates", None) or []
-            if candidates and "MAX_TOKENS" in str(getattr(candidates[0], "finish_reason", "")):
-                reply += "\n\n_(This answer reached the output limit and may be incomplete.)_"
-            return reply
+            try:
+                if not self.gemini_client:
+                    raise RuntimeError("Gemini is not configured")
+                response = self.gemini_client.models.generate_content(
+                    model=model,
+                    contents=self._gemini_contents(messages),
+                    config=genai_types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        max_output_tokens=self.max_output_tokens,
+                    ),
+                )
+                reply = (response.text or "").strip()
+                if not reply:
+                    raise RuntimeError(f"Gemini model {model} returned an empty answer")
+                candidates = getattr(response, "candidates", None) or []
+                if candidates and "MAX_TOKENS" in str(getattr(candidates[0], "finish_reason", "")):
+                    reply += "\n\n_(This answer reached the output limit and may be incomplete.)_"
+                return reply
+            except Exception:
+                self.logger.warning("Gemini model %s failed; retrying with Groq", model)
+                groq_model = self.vision_model if vision else self.text_model
+                return self.generate_reply(
+                    messages, vision=vision, provider="groq",
+                    selected_model=groq_model, user=user,
+                )
 
         primary = selected_model or (self.vision_model if vision else self.text_model)
         fallback = self.vision_fallback if vision and primary == self.vision_model else self.text_fallback if not vision and primary == self.text_model else ""

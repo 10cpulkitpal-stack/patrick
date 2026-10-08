@@ -168,26 +168,45 @@ Open the address in your browser. Run commands from the repository root. For loc
 | `GROQ_VISION_FALLBACK_MODEL` | No | Optional image-capable fallback model. |
 | `GROQ_MAX_OUTPUT_TOKENS` | No | Output-token budget; defaults to `4096` and is limited to 1,024–16,384. |
 | `GEMINI_API_KEY` | Optional | Google AI Studio API key. Enables the Gemini models in the in-app model picker. |
-| `GEMINI_DEFAULT_MODEL` | No | Gemini model selected for new accounts when available; defaults to `gemini-3.8-flash`. |
+| `GEMINI_DEFAULT_MODEL` | No | Gemini model selected for new accounts when available; defaults to the stable `gemini-3.8-flash`. |
 | `SECRET_KEY` | Yes in production | Flask session signing key. Set a long, random value before deployment. |
 | `GOOGLE_CLIENT_ID` | Optional | OAuth client ID from Google Cloud Console. Enables Google sign-in when paired with the secret. |
 | `GOOGLE_CLIENT_SECRET` | Optional | OAuth client secret. Keep it private and store it as a Render environment variable in production. |
-| `GOOGLE_REDIRECT_URI` | Optional | OAuth callback URL. Defaults to the current host's `/auth/google/callback`. |
+| `GOOGLE_REDIRECT_URI` | Optional | On Render, use `https://patrick-c89f.onrender.com/auth/google/callback`. |
 | `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM` | Required for email/password signup | SMTP settings used to send account verification links. Keep the password private. Gmail users should use an app password. |
-| `PUBLIC_BASE_URL` | Recommended | Public base URL used in verification emails (for example, `https://patrick-c89f.onrender.com`). |
+| `PUBLIC_BASE_URL` | Required for Render | Set to `https://patrick-c89f.onrender.com` for verification links. |
 | `DAILY_MESSAGE_LIMIT` | No | Maximum user messages per account per UTC day. Defaults to `100`; each account is also limited to 20 messages per hour and each IP to 60 per hour. |
 | `DATABASE_URL` | Yes in production | Persistent PostgreSQL connection URL. Local development defaults to `sqlite:///patrick.db`; production startup refuses SQLite because Render's local filesystem is ephemeral. |
 | `PORT` | No | Port for the Flask application. Defaults to `5000` |
 | `FLASK_DEBUG` | No | Enables Flask debug mode only for local development; defaults to `false` and is ignored in production. |
 
-When deploying to the existing Render Python web service, set its **Build Command** to `bash render-build.sh` and keep its **Start Command** as `alembic upgrade head && gunicorn backend.app:app`. The build command creates `frontend/out`, which Flask serves from the same origin as the API and login session. Keep the service's health-check path set to `/healthz`. Add the mail settings and `PUBLIC_BASE_URL` as service environment variables. Until SMTP is configured, email/password signup and verification for existing password accounts are unavailable; Google sign-in continues to work.
+## Render deployment
+
+Deploy the repository root to one Render Python web service. The frontend is statically exported during the Render build and Flask serves it from the same origin as the API and session cookie.
+
+| Render setting | Value |
+|---|---|
+| Build Command | `bash render-build.sh` |
+| Start Command | `alembic upgrade head && gunicorn backend.app:app` |
+| Health Check Path | `/healthz` |
+
+Set these environment variables in Render (never commit their secret values):
+
+- Required: `SECRET_KEY`, `GROQ_API_KEY`, `DATABASE_URL`, `PUBLIC_BASE_URL`.
+- Optional Gemini: `GEMINI_API_KEY`; optionally set `GEMINI_DEFAULT_MODEL` (defaults to `gemini-3.8-flash`). An invalid or missing Gemini key disables Gemini model discovery without disabling Groq.
+- Optional Google sign-in: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`.
+- Email verification: `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM`.
+
+Set `PUBLIC_BASE_URL` to `https://patrick-c89f.onrender.com`. Set `GOOGLE_REDIRECT_URI` to `https://patrick-c89f.onrender.com/auth/google/callback`. Add that exact callback under **Authorized redirect URIs** in Google Cloud Console. Use a persistent hosted PostgreSQL URL for `DATABASE_URL`.
+
+Until SMTP is configured, email/password signup and verification for existing password accounts are unavailable; Google sign-in continues to work.
 
 ### Set up Google sign-in
 
 1. Create a **Web application** OAuth client in Google Cloud Console and configure the OAuth consent screen.
 2. Add your local callback URL, `http://127.0.0.1:5000/auth/google/callback`, as an authorized redirect URI.
 3. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in your local `.env` file.
-4. For Render, add the production callback URL `https://YOUR-APP.onrender.com/auth/google/callback` to the OAuth client's authorized redirect URIs. Set the same URL as `GOOGLE_REDIRECT_URI` and add both Google credentials in Render's environment settings.
+4. For Render, add `https://patrick-c89f.onrender.com/auth/google/callback` to the OAuth client's authorized redirect URIs. Set the same URL as `GOOGLE_REDIRECT_URI` and add both Google credentials in Render's environment settings.
 
 Google sign-in requires a verified Google email. If that email already has a Patrick account, signing in with Google opens that account; otherwise, Patrick creates one. Email/password sign-in remains available without Google credentials, but new email/password accounts must verify their email first. Configure the SMTP settings above before enabling email/password registration in production.
 

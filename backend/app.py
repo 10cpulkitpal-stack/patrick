@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from flask import Flask, request, jsonify, session, redirect, url_for, send_from_directory
 from authlib.integrations.flask_client import OAuth
 from groq import Groq
+from google import genai
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import case, create_engine, delete, event, func, select
@@ -73,7 +74,20 @@ if google_oauth_enabled:
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-gemini_client = genai.Client(api_key=gemini_api_key) if gemini_api_key else None
+
+
+def create_gemini_client(api_key):
+    if not api_key:
+        return None
+    try:
+        return genai.Client(api_key=api_key)
+    except Exception as error:
+        app.logger.warning("Gemini client initialization failed; Gemini models are disabled (%s)",
+                           type(error).__name__)
+        return None
+
+
+gemini_client = create_gemini_client(gemini_api_key)
 MODEL = os.environ.get("GROQ_TEXT_MODEL", "openai/gpt-oss-120b").strip()
 TEXT_FALLBACK_MODEL = os.environ.get("GROQ_TEXT_FALLBACK_MODEL", "openai/gpt-oss-20b").strip()
 VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b").strip()
@@ -177,8 +191,9 @@ def available_models():
                 model_id = model_id.removeprefix("models/")
                 if model_id and not any(part in model_id.lower() for part in ("embedding", "tts", "live", "transcri", "image")):
                     models.append({"provider": "gemini", "id": model_id, "label": f"Gemini · {model_id}"})
-        except Exception:
-            app.logger.exception("Could not load available Gemini models")
+        except Exception as error:
+            app.logger.warning("Gemini model discovery failed; Gemini models are disabled (%s)",
+                               type(error).__name__)
     models.sort(key=lambda model: (model["provider"], model["id"].lower()))
     available_models_cache["models"] = models
     available_models_cache["expires_at"] = now + MODEL_CACHE_SECONDS
@@ -351,7 +366,7 @@ def add_security_headers(response):
         "Content-Security-Policy",
         "default-src 'self'; "
         f"script-src 'self' {inline_script_hashes}; "
-        "style-src 'self'; style-src-attr 'none'; "
+        "style-src 'self'; style-src-attr 'unsafe-inline'; "
         "font-src 'self' data:; "
         "img-src 'self' data: blob:; connect-src 'self'; "
         "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'",
@@ -657,6 +672,16 @@ def signup():
 def frontend_asset(asset_path):
     """Serve exported Next.js assets and static routes from the same origin."""
     return send_from_directory(FRONTEND_BUILD_DIR, asset_path)
+
+
+@app.errorhandler(404)
+def not_found(error):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Not found"}), 404
+    not_found_page = os.path.join(FRONTEND_BUILD_DIR, "404.html")
+    if os.path.isfile(not_found_page):
+        return send_from_directory(FRONTEND_BUILD_DIR, "404.html"), 404
+    return error
 
 
 # ---------- chat endpoints (every query is scoped to the logged-in user) ----------

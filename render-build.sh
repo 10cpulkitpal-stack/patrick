@@ -15,8 +15,27 @@ if [[ ! -x "${NODE_HOME}/bin/node" ]]; then
 fi
 export PATH="${NODE_HOME}/bin:${PATH}"
 
+if [[ "$("${NODE_HOME}/bin/node" --version)" != "v${NODE_VERSION}" ]]; then
+  echo "Expected Node.js v${NODE_VERSION} in ${NODE_HOME}" >&2
+  exit 1
+fi
+
+PACKAGE_MANAGER="$("${NODE_HOME}/bin/node" -p "require('${ROOT_DIR}/frontend/package.json').packageManager")"
+if [[ "${PACKAGE_MANAGER}" != "pnpm@${PNPM_VERSION}" ]]; then
+  echo "render-build.sh pins pnpm@${PNPM_VERSION}, but frontend/package.json declares ${PACKAGE_MANAGER}" >&2
+  exit 1
+fi
+
 python -m pip install -r "${ROOT_DIR}/requirements.txt"
 "${NODE_HOME}/bin/npm" install --global --prefix "${NODE_HOME}" "pnpm@${PNPM_VERSION}"
+if [[ "$("${NODE_HOME}/bin/pnpm" --version)" != "${PNPM_VERSION}" ]]; then
+  echo "Failed to install pinned pnpm@${PNPM_VERSION}" >&2
+  exit 1
+fi
 cd "${ROOT_DIR}/frontend"
 "${NODE_HOME}/bin/pnpm" install --frozen-lockfile
 "${NODE_HOME}/bin/pnpm" build
+if [[ ! -s "${ROOT_DIR}/frontend/out/index.html" ]]; then
+  echo "Frontend build did not create frontend/out/index.html" >&2
+  exit 1
+fi
